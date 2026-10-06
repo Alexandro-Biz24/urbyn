@@ -35,4 +35,7 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    port: Number(process.env.PORT) || 4173,
+  },
 })
