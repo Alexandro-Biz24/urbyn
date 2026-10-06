@@ -39,14 +39,14 @@ export function Header() {
   }, []);
 
   return (
-    <header ref={headerRef} className="fixed top-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-b-2 border-slate-200 z-50 shadow-sm">
-      <div className="max-w-7xl mx-auto px-6 py-2">
-        <div className="flex items-center justify-between gap-4">
+    <header ref={headerRef} className="fixed top-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-b-2 border-slate-200 z-50 shadow-sm overflow-x-clip">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2 min-w-0">
+        <div className="flex items-center justify-between gap-3 min-w-0">
           <Link to={isSupplier ? '/fournisseur' : '/'} className="flex items-center shrink-0">
-            <img src={logoAtelierUrbanize} alt="Atelier Urbanize" className="h-[54px] w-auto" />
+            <img src={logoAtelierUrbanize} alt="Atelier Urbanize" className="h-[54px] w-auto max-w-[160px] object-contain" />
           </Link>
 
-          <nav className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+          <nav className="flex items-center gap-1 sm:gap-4 flex-wrap justify-end min-w-0">
             {isLoggedIn && isSupplier ? (
               <>
                 <Link
@@ -59,7 +59,7 @@ export function Header() {
                   to="/fournisseur/leads"
                   className="px-3 py-2 text-sm font-medium text-black hover:bg-slate-100 rounded-lg transition-colors"
                 >
-                  Leads
+                  Devis
                 </Link>
                 <Link
                   to="/fournisseur/expedition"
@@ -129,7 +129,7 @@ export function Header() {
                 <Link
                   to={isSupplier ? '/fournisseur/leads' : '/compte/commandes'}
                   className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-black max-w-[180px] truncate hover:underline"
-                  title={isSupplier ? 'Leads' : 'Commandes'}
+                  title="Devis"
                 >
                   <User className="w-4 h-4 shrink-0" />
                   {userLabel}

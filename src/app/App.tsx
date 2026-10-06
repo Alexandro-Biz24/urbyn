@@ -30,11 +30,11 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white overflow-x-clip max-w-full">
       <SEOMeta jsonLd={ORG_SCHEMA} />
       <Toaster position="top-center" richColors />
       <Header />
-      <div className={isPartnerSpace ? 'pt-[var(--header-height)]' : undefined}>
+      <div className={`${isPartnerSpace ? 'pt-[var(--header-height)]' : undefined} min-w-0`}>
         <AppRoutes />
       </div>
       {!isPartnerSpace && !isSupplier ? <ChatWidget /> : null}

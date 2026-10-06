@@ -30,7 +30,20 @@
       <meta property="og:site_name" content="Urbyn by Atelier Urbanize" />
       <meta property="og:locale" content="fr_FR" />
       <!--seo-head-end-->
-      <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow-x: clip;
+      max-width: 100%;
+    }
+    #root {
+      height: 100%;
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: clip;
+    }
+  </style>
 
     </head>
 

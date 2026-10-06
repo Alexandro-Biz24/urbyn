@@ -12,20 +12,19 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import {
   MASSIF_INSTALLATION_EUR,
-  MASSIF_PER_TON_EXTRA_EUR,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
   isTotemInstallationSelected,
+  truckDedicatedLabel,
   uniqueSupplierNames,
 } from '../lib/massifShipping';
 import {
-  TOTEM_ORIGIN_LABEL,
-  TOTEM_PER_KM_EUR,
-  TOTEM_TRUCK_BASE_EUR,
   TOTEM_TRUCK_CAPACITY,
-  computeTotemShipping,
+  computeTotemShippingByOrigin,
   countTotemUnits,
+  resolveTotemRoadDistanceKm,
+  totemTruckDedicatedLabel,
 } from '../lib/totemShipping';
 import {
   totemVolumeDiscountAmount,
@@ -153,6 +152,7 @@ export function ChiffrageFinalPage() {
   const [servicesByProduct, setServicesByProduct] = useState<Record<string, string[]>>({});
   const [contactForm, setContactForm] = useState<ContactForm>({ firstName: '', lastName: '', email: '', phone: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [totemRoadKm, setTotemRoadKm] = useState<number | null>(null);
 
   const finishOrderSuccess = () => {
     clearCart();
@@ -166,6 +166,9 @@ export function ChiffrageFinalPage() {
     localStorage.removeItem('totemInstallFee');
     localStorage.removeItem('massifShippingBreakdown');
     localStorage.removeItem('totemShippingBreakdown');
+    localStorage.removeItem('totemRoadDistanceCache');
+    localStorage.removeItem('totemRoadDistanceCache_v2');
+    localStorage.removeItem('totemRoadDistanceCache_v3');
     localStorage.removeItem('complianceResults');
     setSubmitted(true);
   };
@@ -181,6 +184,29 @@ export function ChiffrageFinalPage() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    const pc = deliveryAddress?.postalCode?.trim();
+    if (!pc) {
+      setTotemRoadKm(null);
+      return;
+    }
+    let cancelled = false;
+    resolveTotemRoadDistanceKm({
+      postalCode: pc,
+      country: deliveryAddress?.country || 'France',
+      destCoords: deliveryAddress?.coordinates ?? null,
+    }).then((km) => {
+      if (!cancelled) setTotemRoadKm(km);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    deliveryAddress?.postalCode,
+    deliveryAddress?.country,
+    deliveryAddress?.coordinates,
+  ]);
 
   useEffect(() => {
     if (!isLoggedIn || !session) return;
@@ -251,22 +277,25 @@ export function ChiffrageFinalPage() {
 
   const totemShipping = useMemo(
     () =>
-      computeTotemShipping(
-        totemQty,
+      computeTotemShippingByOrigin(
+        items,
         deliveryAddress?.postalCode,
         deliveryAddress?.country || 'France',
       ),
-    [totemQty, deliveryAddress?.postalCode, deliveryAddress?.country],
+    [items, deliveryAddress?.postalCode, deliveryAddress?.country, totemRoadKm],
   );
 
-  const hasPanels = (itemsByType['panels'] ?? []).length > 0;
-  const panelShipStored = hasPanels ? Number(localStorage.getItem('shippingCostOther') || '0') : 0;
+  const panelItemsCount = items.filter((i) => i.details?.itemType === 'panels').length;
+  const hasPanelsOnly = panelItemsCount > 0 && !hasTotem;
+  const panelShipStored = hasPanelsOnly
+    ? Number(localStorage.getItem('shippingCostOther') || '0')
+    : 0;
   const massifShipAmount = massifShipping.shippingTotal;
   const totemShipAmount = hasTotem ? totemShipping.shippingTotal : 0;
   const shippingCost = massifShipAmount + totemShipAmount + panelShipStored;
 
   useEffect(() => {
-    if (!hasPanels) {
+    if (!hasPanelsOnly) {
       localStorage.setItem('shippingCostOther', '0');
     }
     localStorage.setItem('shippingCost', String(shippingCost + massifInstallFee + totemInstallFee));
@@ -280,7 +309,7 @@ export function ChiffrageFinalPage() {
     totemInstallFee,
     massifShipAmount,
     totemShipAmount,
-    hasPanels,
+    hasPanelsOnly,
     totemShipping,
   ]);
 
@@ -465,7 +494,12 @@ export function ChiffrageFinalPage() {
                               {String(item.details.description)}
                             </p>
                           )}
-                          <p className="text-xs text-muted-foreground mt-0.5">Qté : {item.quantity}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Qté : ×{item.quantity}
+                            {item.price > 0
+                              ? ` · ${fmt(item.price)} € HT / u`
+                              : ''}
+                          </p>
                           {item.type === 'massif' && item.details?.weight && (
                             <p className="text-xs text-muted-foreground">
                               {item.details.weight.toLocaleString('fr-FR')} kg/u
@@ -567,7 +601,9 @@ export function ChiffrageFinalPage() {
                   {massifShipping.groups.map((g) => (
                     <div key={g.supplierKey} className="space-y-2">
                       {massifShipping.groups.length > 1 && (
-                        <p className="text-xs font-semibold text-foreground">{g.supplierName}</p>
+                        <p className="text-xs font-semibold text-foreground">
+                          {truckDedicatedLabel(g.productLabels)}
+                        </p>
                       )}
                       {g.truckFills.map((pct, i) => (
                         <TruckGauge
@@ -575,15 +611,10 @@ export function ChiffrageFinalPage() {
                           fillPct={pct}
                           truckIndex={i}
                           totalTrucks={g.trucksCount}
-                          label={massifShipping.groups.length > 1 ? g.supplierName : undefined}
                         />
                       ))}
                       <p className="text-[11px] text-muted-foreground">
-                        {g.trucksCount} × 200 € + {g.trucksCount} × {g.distanceKm} km
-                        {g.tonnageFee > 0
-                          ? ` + ${MASSIF_PER_TON_EXTRA_EUR} €/t (${fmt(g.tonnageFee)} €)`
-                          : ''}{' '}
-                        = <strong>{fmt(g.shippingTotal)} €</strong>
+                        Livraison : <strong>{fmt(g.shippingTotal)} €</strong>
                       </p>
                     </div>
                   ))}
@@ -595,7 +626,7 @@ export function ChiffrageFinalPage() {
                     <p>
                       Votre commande nécessite <strong>{massifShipping.trucksTotal} camions</strong>
                       {massifShipping.groups.length > 1
-                        ? ` répartis sur ${massifShipping.groups.length} fournisseurs`
+                        ? ` répartis selon les produits de votre panier`
                         : ''}
                       . Les massifs ne sont jamais mélangés avec les totems.
                     </p>
@@ -609,7 +640,7 @@ export function ChiffrageFinalPage() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Truck className="w-4 h-4 text-primary" />
-                    <h2 className="text-foreground">Remplissage camion — totems ({TOTEM_ORIGIN_LABEL})</h2>
+                    <h2 className="text-foreground">Remplissage camion — totems</h2>
                   </div>
                   <span className="text-xs bg-muted text-muted-foreground px-2.5 py-1 rounded-full font-medium">
                     {totemShipping.trucksCount} camion{totemShipping.trucksCount > 1 ? 's' : ''} · max {TOTEM_TRUCK_CAPACITY}/camion
@@ -629,20 +660,45 @@ export function ChiffrageFinalPage() {
                   ))}
                 </div>
 
-                <div className="space-y-2">
-                  {totemShipping.truckFills.map((pct, i) => (
-                    <TruckGauge
-                      key={`totem-truck-${i}`}
-                      fillPct={pct}
-                      truckIndex={i}
-                      totalTrucks={totemShipping.trucksCount}
-                    />
+                <div className="space-y-4">
+                  {(totemShipping.groups.length > 0
+                    ? totemShipping.groups
+                    : [
+                        {
+                          groupKey: 'all',
+                          productLabels: [] as string[],
+                          truckFills: totemShipping.truckFills,
+                          trucksCount: totemShipping.trucksCount,
+                          shippingTotal: totemShipping.shippingTotal,
+                        },
+                      ]
+                  ).map((g) => (
+                    <div key={g.groupKey} className="space-y-2">
+                      {totemShipping.groups.length > 1 && (
+                        <p className="text-xs font-semibold text-foreground">
+                          {totemTruckDedicatedLabel(g.productLabels)}
+                        </p>
+                      )}
+                      {g.truckFills.map((pct, i) => (
+                        <TruckGauge
+                          key={`${g.groupKey}-${i}`}
+                          fillPct={pct}
+                          truckIndex={i}
+                          totalTrucks={g.trucksCount}
+                        />
+                      ))}
+                      {totemShipping.groups.length > 1 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Livraison : <strong>{fmt(g.shippingTotal)} €</strong>
+                        </p>
+                      )}
+                    </div>
                   ))}
-                  <p className="text-[11px] text-muted-foreground pt-1">
-                    {totemShipping.trucksCount} × ({TOTEM_TRUCK_BASE_EUR} € +{' '}
-                    {totemShipping.distanceKm} km × {TOTEM_PER_KM_EUR} €) ={' '}
-                    <strong>{fmt(totemShipping.shippingTotal)} €</strong>
-                  </p>
+                  {totemShipping.groups.length <= 1 && (
+                    <p className="text-[11px] text-muted-foreground pt-1">
+                      Livraison : <strong>{fmt(totemShipping.shippingTotal)} €</strong>
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -704,13 +760,13 @@ export function ChiffrageFinalPage() {
                 </div>
                 {totemShipAmount > 0 && (
                   <div className="flex justify-between text-xs text-muted-foreground pl-1">
-                    <span>Totems {TOTEM_ORIGIN_LABEL} · {totemShipping.trucksCount} camion{totemShipping.trucksCount > 1 ? 's' : ''}</span>
+                    <span>Totems</span>
                     <span>{fmt(totemShipAmount)} €</span>
                   </div>
                 )}
                 {massifShipAmount > 0 && (
                   <div className="flex justify-between text-xs text-muted-foreground pl-1">
-                    <span>Massifs · {massifShipping.trucksTotal} camion{massifShipping.trucksTotal > 1 ? 's' : ''}</span>
+                    <span>Massifs</span>
                     <span>{fmt(massifShipAmount)} €</span>
                   </div>
                 )}
@@ -730,12 +786,6 @@ export function ChiffrageFinalPage() {
                   <div className="flex justify-between text-muted-foreground">
                     <span>Installation massifs</span>
                     <span className="font-medium text-foreground">{fmt(massifInstallFee)} €</span>
-                  </div>
-                )}
-                {hasMassif && massifShipping.tonnageFeeTotal > 0 && (
-                  <div className="flex justify-between text-muted-foreground text-xs">
-                    <span>Coût exceptionnel ({MASSIF_PER_TON_EXTRA_EUR} €/t)</span>
-                    <span className="font-medium text-foreground">{fmt(massifShipping.tonnageFeeTotal)} €</span>
                   </div>
                 )}
                 <div className="border-t border-border pt-2.5 mt-1 space-y-1.5">

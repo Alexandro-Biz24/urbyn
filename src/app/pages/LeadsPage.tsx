@@ -53,7 +53,7 @@ export function LeadsPage() {
     try {
       setSelected(await fetchSupplierLead(id))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Impossible de charger le lead')
+      setError(e instanceof Error ? e.message : 'Impossible de charger le devis')
     } finally {
       setDetailLoading(false)
     }
@@ -76,7 +76,7 @@ export function LeadsPage() {
               </Button>
             ) : null}
             <h1 className="text-2xl font-bold text-black">
-              {selected ? `Lead #${selected.order_id}` : 'Leads'}
+              {selected ? `Devis #${selected.order_id}` : 'Devis'}
             </h1>
           </div>
           <Link
@@ -93,7 +93,7 @@ export function LeadsPage() {
         {!loading && !selected && leads.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
             <ShoppingBag className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-            <p className="text-gray-600">Aucun lead pour le moment.</p>
+            <p className="text-gray-600">Aucun devis pour le moment.</p>
           </div>
         ) : null}
 
@@ -110,7 +110,7 @@ export function LeadsPage() {
               >
                 <div className="flex justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-black">Lead #{l.order_id}</p>
+                    <p className="font-semibold text-black">Devis #{l.order_id}</p>
                     <p className="text-xs text-gray-500 mt-0.5">{fmtDate(l.created_at)}</p>
                     <p className="text-sm text-gray-700 mt-2">
                       {l.buyer_label || 'Client'} · {l.items_count} produit(s)
@@ -161,7 +161,7 @@ export function LeadsPage() {
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-              <h2 className="font-bold text-black">Vos produits sur cette commande</h2>
+              <h2 className="font-bold text-black">Vos produits sur ce devis</h2>
               {selected.items.map((it) => (
                 <div
                   key={it.id}
@@ -180,7 +180,7 @@ export function LeadsPage() {
                 </div>
               ))}
               <div className="flex justify-between pt-2 border-t border-gray-200 font-bold text-base">
-                <span>Votre CA sur ce lead (HT)</span>
+                <span>Votre CA sur ce devis (HT)</span>
                 <span>{fmtEuro(selected.supplier_total_ht)}</span>
               </div>
               <div className="flex justify-between text-sm text-gray-600">

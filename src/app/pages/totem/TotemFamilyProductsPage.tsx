@@ -231,10 +231,6 @@ export function TotemFamilyProductsPage() {
                       {product.dimensions_label ? (
                         <p className="text-xs text-black mt-1">{product.dimensions_label}</p>
                       ) : null}
-                      <p className="text-xs text-green-700 mt-2 font-medium">
-                        Disponible à la livraison
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">Article non stocké</p>
                     </div>
                   </CardContent>
                 </Card>

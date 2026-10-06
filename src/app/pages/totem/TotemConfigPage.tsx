@@ -13,8 +13,6 @@ import { useCart } from '../../context/CartContext';
 import { imgCaissonBois80 as image_Urbanize_caisson_bois_800_rendu3D_01, imgCaissonBois120 as image_Urbanize_caisson_bois_1200_rendu3D_01, imgCaissonBois160 as image_Urbanize_caisson_bois_1600_rendu3D_01, imgCaissonBois200 as image_Urbanize_caisson_bois_2000_rendu3D_01 } from '../../assets/images';
 import { TOTEM_INSTALLATION_EUR, isTotemInstallationSelected } from '../../lib/massifShipping';
 import {
-  totemCatalogEntryPrice,
-  totemUnitPriceAfterDiscount,
   totemVolumeDiscountAmount,
   totemVolumeDiscountBanner,
 } from '../../lib/totemDiscount';
@@ -103,7 +101,7 @@ const INSTALLATION_PRICE = TOTEM_INSTALLATION_EUR;
 export function TotemConfigPage() {
   const { format } = useParams<{ format: string }>();
   const navigate = useNavigate();
-  const { addItems, items } = useCart();
+  const { addItems, items, closeSidebar } = useCart();
 
   const formatData = format && TOTEM_DATA[format as keyof typeof TOTEM_DATA];
 
@@ -163,25 +161,41 @@ export function TotemConfigPage() {
   };
 
   const handleAddToCart = () => {
+    const totemId = `totem-caisson-bois-${format}`
     const batch = [
       {
-        id: `totem-caisson-bois-${format}`,
+        id: totemId,
         type: 'totem' as const,
         name: formatData.label,
         price: formatData.price,
         quantity,
-        details: { itemType: 'totem', format, basePrice: formatData.price },
+        details: {
+          itemType: 'totem',
+          format,
+          basePrice: formatData.price,
+          panelSize: formatData.panelSize,
+          panelPrice: formatData.panelPrice,
+        },
       },
       ...(panelsEnabled ? [{
-        id: `panels-caisson-bois-${format}`,
+        id: `panels-for-${totemId}`,
         type: 'totem' as const,
         name: 'Panneaux imprimés laminé anti-UV dibond 3mm',
         price: formatData.panelPrice,
         quantity: panelsQuantity,
-        details: { itemType: 'panels', format, panelSize: formatData.panelSize, panelPrice: formatData.panelPrice },
+        details: {
+          itemType: 'panels',
+          format,
+          forTotemId: totemId,
+          forTotemName: formatData.label,
+          panelSize: formatData.panelSize,
+          panelPrice: formatData.panelPrice,
+        },
       }] : []),
     ];
     addItems(batch);
+    closeSidebar();
+    navigate('/panier');
   };
 
   const calculatePrice = () => {
@@ -233,12 +247,7 @@ export function TotemConfigPage() {
             <h1 className="text-3xl font-bold mb-2 text-black">{formatData.label}</h1>
             <div className="mb-6">
               <p className="text-base font-semibold text-black">
-                {totemCatalogEntryPrice(formatData.price)}€ HT
-              </p>
-              
-              <p className="text-sm text-black mt-1">
-                Catalogue {formatData.price}€ · Dès 5 : {totemUnitPriceAfterDiscount(formatData.price, 5)}€
-                (−10%) · Dès 10 : {totemUnitPriceAfterDiscount(formatData.price, 10)}€ (−15%)
+                {formatData.price}€ HT
               </p>
             </div>
 

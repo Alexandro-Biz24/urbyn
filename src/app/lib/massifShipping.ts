@@ -1,11 +1,13 @@
 /**
- * Livraison massifs béton — mutualisée par fournisseur.
+ * Livraison massifs béton — mutualisée par fournisseur + adresse d'origine.
  *
  * - Capacité camion : 24 T
  * - 200 € / camion entamé
  * - 1 € / km (distance fournisseur → livraison)
  * - 3,4 € / tonne transportée (coût exceptionnel)
  * - Installation massif : 490 €
+ *
+ * L'UI n'expose pas l'origine : on affiche les produits du panier dédiés au camion.
  */
 
 export const MASSIF_TRUCK_CAPACITY_KG = 24_000
@@ -14,11 +16,14 @@ export const MASSIF_PER_KM_EUR = 1
 export const MASSIF_PER_TON_EXTRA_EUR = 3.4
 export const MASSIF_INSTALLATION_EUR = 490
 export const TOTEM_INSTALLATION_EUR = 1690
+export const FALLBACK_ORIGIN_ZIP = '75015'
+
+const SERVICES_KEY = 'servicesSpecifiques'
 
 /** Lit le mapping servicesSpecifiques (legacy array → totem). */
 export function readServicesByProduct(): Record<string, string[]> {
   try {
-    const raw = sessionStorage.getItem('servicesSpecifiques')
+    const raw = sessionStorage.getItem(SERVICES_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed)) return { totem: parsed }
@@ -30,7 +35,7 @@ export function readServicesByProduct(): Record<string, string[]> {
 }
 
 function writeServicesByProduct(map: Record<string, string[]>) {
-  sessionStorage.setItem('servicesSpecifiques', JSON.stringify(map))
+  sessionStorage.setItem(SERVICES_KEY, JSON.stringify(map))
 }
 
 export function isMassifInstallationSelected(): boolean {
@@ -56,10 +61,14 @@ export function setTotemInstallationSelected(enabled: boolean) {
 
 export type MassifCartLike = {
   quantity: number
+  name?: string
+  id?: string
+  type?: string
   details?: {
     itemType?: string
     weight?: number
     totalWeight?: number
+    productId?: number
     companyName?: string | null
     company_name?: string | null
     companyTva?: string | null
@@ -71,13 +80,15 @@ export type MassifCartLike = {
 
 function isMassifProductLine(item: MassifCartLike): boolean {
   const t = item.details?.itemType
-  if (t === 'manille' || t === 'installation') return false
-  return t === 'massif' || (item as { type?: string }).type === 'massif'
+  if (t === 'manille' || t === 'palette' || t === 'installation') return false
+  return t === 'massif' || item.type === 'massif'
 }
 
 export type SupplierTruckGroup = {
   supplierKey: string
   supplierName: string
+  /** Noms produits du panier mutualisés dans ce camion (sans exposer l'origine). */
+  productLabels: string[]
   companyZip: string | null
   totalWeightKg: number
   trucksCount: number
@@ -89,12 +100,28 @@ export type SupplierTruckGroup = {
   shippingTotal: number
 }
 
-function haversineKm(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
+/** Libellé utilisateur : camion dédié à tel(s) produit(s). */
+export function truckDedicatedLabel(productLabels: string[]): string {
+  const labels = productLabels.filter(Boolean)
+  if (labels.length === 0) return 'Produits du panier'
+  if (labels.length === 1) return `Dédié à ${labels[0]}`
+  if (labels.length === 2) return `Dédié à ${labels[0]} et ${labels[1]}`
+  return `Dédié à ${labels.slice(0, -1).join(', ')} et ${labels[labels.length - 1]}`
+}
+
+function productLabelsOf(list: MassifCartLike[]): string[] {
+  const seen = new Set<string>()
+  const labels: string[] = []
+  for (const item of list) {
+    const raw = (item.name || '').toString().trim()
+    if (!raw || seen.has(raw)) continue
+    seen.add(raw)
+    labels.push(raw)
+  }
+  return labels
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371
   const toRad = (d: number) => (d * Math.PI) / 180
   const dLat = toRad(lat2 - lat1)
@@ -106,11 +133,10 @@ function haversineKm(
 }
 
 /** Approximation FR : centroïde départemental grossier à partir du CP. */
-function approxLatLngFromFrenchZip(zip: string): { lat: number; lng: number } | null {
+export function approxLatLngFromFrenchZip(zip: string): { lat: number; lng: number } | null {
   const digits = zip.replace(/\D/g, '')
   if (digits.length < 2) return null
   const dept = parseInt(digits.slice(0, 2), 10)
-  // Approximation relative à Paris (48.86, 2.35)
   const lat = 48.86 + ((dept % 20) - 10) * 0.18
   const lng = 2.35 + ((Math.floor(dept / 5) % 20) - 10) * 0.22
   return { lat, lng }
@@ -124,14 +150,11 @@ export function estimateDistanceKm(
   const destZip = (toZip || '').trim()
   const originZip = (fromZip || '').trim()
   if (!destZip) return 80
-  if (toCountry !== 'France' && toCountry !== 'FR') {
-    return 250
-  }
-  const from = approxLatLngFromFrenchZip(originZip || '75001')
+  if (toCountry !== 'France' && toCountry !== 'FR') return 250
+  const from = approxLatLngFromFrenchZip(originZip || FALLBACK_ORIGIN_ZIP)
   const to = approxLatLngFromFrenchZip(destZip)
   if (!from || !to) return 80
-  const km = haversineKm(from.lat, from.lng, to.lat, to.lng)
-  return Math.max(20, Math.round(km))
+  return Math.max(20, Math.round(haversineKm(from.lat, from.lng, to.lat, to.lng)))
 }
 
 export function trucksForWeight(totalWeightKg: number): {
@@ -170,6 +193,16 @@ function supplierNameOf(item: MassifCartLike): string {
   return (d.companyName || d.company_name || 'Fournisseur').toString()
 }
 
+function originZipOf(item: MassifCartLike): string {
+  const d = item.details || {}
+  const zip = (d.companyZip || d.company_zip || '').toString().trim()
+  return zip || FALLBACK_ORIGIN_ZIP
+}
+
+function truckGroupKeyOf(item: MassifCartLike): string {
+  return `${supplierKeyOf(item)}@@${originZipOf(item)}`
+}
+
 function unitWeightKg(item: MassifCartLike): number {
   const d = item.details || {}
   if (typeof d.weight === 'number' && d.weight > 0) return d.weight
@@ -179,7 +212,7 @@ function unitWeightKg(item: MassifCartLike): number {
   return 0
 }
 
-/** Groupe les massifs du panier par fournisseur et calcule camions + frais. */
+/** Groupe les massifs par fournisseur + adresse d'origine, calcule camions + frais. */
 export function computeMassifShippingBySupplier(
   items: MassifCartLike[],
   deliveryPostalCode: string | null | undefined,
@@ -194,24 +227,22 @@ export function computeMassifShippingBySupplier(
 } {
   const includeTonnageFee = options?.includeTonnageFee !== false
   const massifs = items.filter(isMassifProductLine)
-  const bySupplier = new Map<string, MassifCartLike[]>()
+  const byGroup = new Map<string, MassifCartLike[]>()
   for (const item of massifs) {
-    const key = supplierKeyOf(item)
-    const list = bySupplier.get(key) || []
+    const key = truckGroupKeyOf(item)
+    const list = byGroup.get(key) || []
     list.push(item)
-    bySupplier.set(key, list)
+    byGroup.set(key, list)
   }
 
   const groups: SupplierTruckGroup[] = []
-  for (const [key, list] of bySupplier) {
+  for (const [key, list] of byGroup) {
     const totalWeightKg = list.reduce(
       (sum, it) => sum + unitWeightKg(it) * it.quantity,
       0,
     )
     const { trucksCount, truckFills } = trucksForWeight(totalWeightKg)
-    const zip =
-      list.map((i) => i.details?.companyZip || i.details?.company_zip).find(Boolean) ||
-      null
+    const zip = originZipOf(list[0])
     const distanceKm = estimateDistanceKm(zip, deliveryPostalCode, deliveryCountry)
     const truckFee = trucksCount * MASSIF_TRUCK_BASE_EUR
     const distanceFee = trucksCount * distanceKm * MASSIF_PER_KM_EUR
@@ -222,6 +253,7 @@ export function computeMassifShippingBySupplier(
     groups.push({
       supplierKey: key,
       supplierName: supplierNameOf(list[0]),
+      productLabels: productLabelsOf(list),
       companyZip: zip,
       totalWeightKg,
       trucksCount,
@@ -243,30 +275,26 @@ export function computeMassifShippingBySupplier(
   }
 }
 
-function massifLineKey(item: MassifCartLike & { id?: string }): string {
+function massifLineKey(item: MassifCartLike): string {
   const d = item.details || {}
-  const productId = (d as { productId?: number }).productId
-  if (productId != null) return `massif-api-${productId}`
+  if (d.productId != null) return `massif-api-${d.productId}`
   if (item.id) return item.id
   return `${supplierKeyOf(item)}-${d.weight ?? 0}-${item.quantity}`
 }
 
 /**
  * Fusionne panier + sélection en cours pour le calcul camion.
- * Même produit (même id) → quantités additionnées (aperçu après « Ajouter au panier »).
+ * Même produit (même id) → quantités additionnées.
  */
 export function mergeMassifCartAndDraft(
-  cartItems: (MassifCartLike & { id?: string })[],
-  draftItems: (MassifCartLike & { id?: string })[],
+  cartItems: MassifCartLike[],
+  draftItems: MassifCartLike[],
 ): MassifCartLike[] {
-  const map = new Map<string, MassifCartLike & { id?: string }>()
+  const map = new Map<string, MassifCartLike>()
 
   for (const item of cartItems) {
-    if (item.details?.itemType !== 'massif' && (item as { type?: string }).type !== 'massif') {
-      continue
-    }
-    const key = massifLineKey(item)
-    map.set(key, { ...item, quantity: item.quantity })
+    if (!isMassifProductLine(item)) continue
+    map.set(massifLineKey(item), { ...item, quantity: item.quantity })
   }
 
   for (const item of draftItems) {
@@ -278,6 +306,7 @@ export function mergeMassifCartAndDraft(
       map.set(key, {
         ...prev,
         ...item,
+        name: item.name || prev.name,
         quantity: qty,
         details: {
           ...prev.details,
@@ -297,9 +326,7 @@ export function mergeMassifCartAndDraft(
 export function uniqueSupplierNames(items: MassifCartLike[]): string[] {
   const names = new Set<string>()
   for (const item of items) {
-    if (isMassifProductLine(item)) {
-      names.add(supplierNameOf(item))
-    }
+    if (isMassifProductLine(item)) names.add(supplierNameOf(item))
   }
   return [...names]
 }

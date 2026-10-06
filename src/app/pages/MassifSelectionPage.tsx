@@ -1,6 +1,6 @@
 import { SEOMeta, breadcrumbSchema } from '../components/SEOMeta';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ArrowLeft, ArrowRight, Check, Loader2, AlertTriangle, HelpCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
@@ -19,9 +19,12 @@ import {
   fetchMassifProducts,
   fetchMassifWeightBands,
   type MassifLeafCatalog,
+  type MassifOffer,
   type MassifProduct,
+  resolveMassifOfferFromSession,
 } from '../api/massif';
 import { ApiError } from '../api/client';
+import { resolveManilleNeed } from '../lib/massifManille';
 
 type WizardStep = 'weight' | 'family' | 'dimension';
 
@@ -44,10 +47,15 @@ function productAttributes(
     }
   }
   for (const attr of product.free_attributes ?? []) {
-    if (!attr.value?.trim()) continue;
-    // Nécessaire pour matching Manille sur l'écran qty
-    if (/manille/i.test(attr.name || '')) {
-      rows.push({ label: attr.name, value: attr.value });
+    if (!attr.value?.trim() && attr.value !== '0') continue;
+    const name = attr.name || '';
+    // Manille Type, Manille Nombre, Nb de massif / palette, etc.
+    if (
+      /manille/i.test(name) ||
+      /palette/i.test(name) ||
+      /nb\s*de\s*massif/i.test(name)
+    ) {
+      rows.push({ label: name.replace(/\s+/g, ' ').trim(), value: String(attr.value).trim() });
     }
   }
   return rows;
@@ -133,6 +141,14 @@ function getMassifRecommendation(height: HelperHeight, typology: HelperTypology)
 // ── Composant ─────────────────────────────────────────────────────────────────
 export function MassifSelectionPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const massifOffer: MassifOffer = useMemo(() => {
+    const fromQuery = (searchParams.get('offer') || '').trim().toLowerCase();
+    if (fromQuery === 'location') return 'Location';
+    if (fromQuery === 'acquisition' || fromQuery === 'aquisition') return 'Acquisition';
+    return resolveMassifOfferFromSession();
+  }, [searchParams]);
 
   const [step, setStep] = useState<WizardStep>('weight');
   const [selectedBandId, setSelectedBandId] = useState<string | null>(null);
@@ -147,7 +163,6 @@ export function MassifSelectionPage() {
   const [apiLoading, setApiLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiProducts, setApiProducts] = useState<MassifProduct[]>([]);
-  const [lastPayload, setLastPayload] = useState<object | null>(null);
 
   // Section « Aide au dimensionnement » ouverte par défaut à l'arrivée sur la page.
   const [helperOpen, setHelperOpen] = useState(true);
@@ -169,7 +184,7 @@ export function MassifSelectionPage() {
   // Charge les fourchettes de poids réellement peuplées après import catalogue
   useEffect(() => {
     let cancelled = false;
-    fetchMassifWeightBands()
+    fetchMassifWeightBands({ offer: massifOffer })
       .then((data) => {
         if (cancelled) return;
         const keys = new Set(
@@ -185,7 +200,7 @@ export function MassifSelectionPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [massifOffer]);
 
   // Familles (feuilles) filtrées par le poids sélectionné
   useEffect(() => {
@@ -197,7 +212,7 @@ export function MassifSelectionPage() {
     setCatalogsLoading(true);
     setCatalogsError(null);
     const filter = weightFilterFromBand(selectedBand);
-    fetchMassifLeafCatalogs(filter)
+    fetchMassifLeafCatalogs({ ...filter, offer: massifOffer })
       .then((data) => {
         if (!cancelled) setCatalogs(data.catalogs ?? []);
       })
@@ -214,7 +229,7 @@ export function MassifSelectionPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBand]);
+  }, [selectedBand, massifOffer]);
 
   const handleCatalogSelect = async (
     catalog: MassifLeafCatalog,
@@ -230,8 +245,7 @@ export function MassifSelectionPage() {
     setStep('dimension');
 
     const filter = weightFilterFromBand(band);
-    const payload = { catalog_id: catalog.id, ...filter };
-    setLastPayload(payload);
+    const payload = { catalog_id: catalog.id, ...filter, offer: massifOffer };
     setApiLoading(true);
     try {
       const data = await fetchMassifProducts(payload);
@@ -265,7 +279,14 @@ export function MassifSelectionPage() {
     if (!selectedCatalog || !selectedProduct) return;
     const familyType = catalogToMassifType(selectedCatalog) ?? 'cubique';
     const defaultOption: MassifOption = familyType === 'cubique' ? 'reservation' : 'aucun';
+    const attributes = productAttributes(selectedProduct, selectedCatalog.id);
+    const manilleNeed = resolveManilleNeed({
+      attributes,
+      free_attributes: selectedProduct.free_attributes,
+      mandatory_attributes: selectedProduct.mandatory_attributes,
+    });
     const config = {
+      offer: massifOffer,
       items: [
         {
           id: `massif-${familyType}-${selectedProduct.product_id}`,
@@ -276,7 +297,9 @@ export function MassifSelectionPage() {
           product: selectedProduct,
           catalogId: selectedCatalog.id,
           catalogName: selectedCatalog.name,
-          attributes: productAttributes(selectedProduct, selectedCatalog.id),
+          attributes,
+          manilleType: manilleNeed?.type ?? null,
+          manilleNombre: manilleNeed?.qty ?? null,
           fromApi: true,
         },
       ],
@@ -517,7 +540,7 @@ export function MassifSelectionPage() {
               {catalogsLoading && (
                 <div className="flex flex-col items-center justify-center py-16 gap-3 text-gray-500">
                   <Loader2 className="w-8 h-8 animate-spin text-black" />
-                  <p className="text-sm">Chargement des catalogues Massif Type…</p>
+                  <p className="text-sm">Chargement des catalogues Massif…</p>
                 </div>
               )}
 
@@ -533,7 +556,7 @@ export function MassifSelectionPage() {
 
               {!catalogsLoading && !catalogsError && catalogs.length === 0 && (
                 <div className="text-center py-12 text-gray-500 border border-dashed border-gray-200 rounded-xl">
-                  <p className="text-sm">Aucun catalogue feuille sous « Massif Type ».</p>
+                  <p className="text-sm">Aucun catalogue feuille sous « Massif / {massifOffer} ».</p>
                 </div>
               )}
 
@@ -696,17 +719,6 @@ export function MassifSelectionPage() {
                     );
                   })}
                 </div>
-              )}
-
-              {lastPayload && !apiLoading && (
-                <details className="mt-6 text-xs text-gray-400">
-                  <summary className="cursor-pointer hover:text-gray-600">
-                    Payload envoyé à l&apos;API
-                  </summary>
-                  <pre className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-auto text-[11px]">
-                    {JSON.stringify(lastPayload, null, 2)}
-                  </pre>
-                </details>
               )}
 
               <Button

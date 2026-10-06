@@ -35,16 +35,16 @@ import {
   formatPanelPriceEur,
 } from '../../lib/totemPanelPrice'
 import {
-  TOTEM_ORIGIN_LABEL,
-  TOTEM_PER_KM_EUR,
-  TOTEM_TRUCK_BASE_EUR,
+  extractNbPanneaux,
+  maxPanelsForTotemQty,
+} from '../../lib/totemPanels'
+import {
   TOTEM_TRUCK_CAPACITY,
   computeTotemShipping,
   countTotemUnits,
+  resolveTotemRoadDistanceKm,
 } from '../../lib/totemShipping'
 import {
-  totemCatalogEntryPrice,
-  totemUnitPriceAfterDiscount,
   totemVolumeDiscountAmount,
   totemVolumeDiscountBanner,
   totemVolumeDiscountPercentLabel,
@@ -93,7 +93,7 @@ export function TotemProductDetailPage() {
   const [searchParams] = useSearchParams()
   const familyId = searchParams.get('family')
   const navigate = useNavigate()
-  const { addItems, items } = useCart()
+  const { addItems, items, closeSidebar } = useCart()
 
   const [product, setProduct] = useState<TotemProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -109,6 +109,7 @@ export function TotemProductDetailPage() {
   const [deliveryCountry, setDeliveryCountry] = useState('France')
   const [deliveryInfoValidated, setDeliveryInfoValidated] = useState(false)
   const [postalCodeError, setPostalCodeError] = useState(false)
+  const [totemRoadKm, setTotemRoadKm] = useState<number | null>(null)
 
   useEffect(() => {
     const id = Number(productId)
@@ -136,13 +137,20 @@ export function TotemProductDetailPage() {
     }
   }, [productId])
 
+  const panelsPerUnit = useMemo(
+    () => extractNbPanneaux({ attributes: product?.attributes }),
+    [product?.attributes],
+  )
+
+  const panelsMax = maxPanelsForTotemQty(quantity, panelsPerUnit)
+
   useEffect(() => {
     if (panelsEnabled) {
-      const newMax = quantity * 2
+      const newMax = maxPanelsForTotemQty(quantity, panelsPerUnit)
       setPanelsQuantity(newMax)
       setPanelsInputValue(String(newMax))
     }
-  }, [quantity, panelsEnabled])
+  }, [quantity, panelsEnabled, panelsPerUnit])
 
   useEffect(() => {
     const saved = localStorage.getItem('deliveryInfo')
@@ -153,6 +161,41 @@ export function TotemProductDetailPage() {
       setDeliveryInfoValidated(true)
     }
   }, [])
+
+  // Distance route Évreux → CP (géocodage geo.api.gouv.fr + OSRM, même source que l’adresse)
+  useEffect(() => {
+    if (!deliveryInfoValidated || !deliveryPostalCode.trim()) {
+      setTotemRoadKm(null)
+      return
+    }
+    let cancelled = false
+    let destCoords: { lat: number; lng: number } | null = null
+    try {
+      const full = localStorage.getItem('deliveryAddress')
+      if (full) {
+        const addr = JSON.parse(full)
+        if (
+          addr?.postalCode === deliveryPostalCode.trim() &&
+          addr?.coordinates?.lat != null &&
+          addr?.coordinates?.lng != null
+        ) {
+          destCoords = addr.coordinates
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    resolveTotemRoadDistanceKm({
+      postalCode: deliveryPostalCode,
+      country: deliveryCountry || 'France',
+      destCoords,
+    }).then((km) => {
+      if (!cancelled) setTotemRoadKm(km)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [deliveryInfoValidated, deliveryPostalCode, deliveryCountry])
 
   const validatePostalCode = (code: string, country: string) => {
     const rule = POSTAL_RULES[country]
@@ -207,8 +250,9 @@ export function TotemProductDetailPage() {
         totalQuantity,
         deliveryInfoValidated ? deliveryPostalCode : null,
         deliveryCountry || 'France',
+        totemRoadKm,
       ),
-    [totalQuantity, deliveryInfoValidated, deliveryPostalCode, deliveryCountry],
+    [totalQuantity, deliveryInfoValidated, deliveryPostalCode, deliveryCountry, totemRoadKm],
   )
 
   const cartTotemsDiscount = totemVolumeDiscountAmount(cartTotemsHT, totalQuantity)
@@ -229,10 +273,11 @@ export function TotemProductDetailPage() {
     const label = product.product_name.replace(/^totem\s+/i, '')
     // Prix catalogue : la remise volume est appliquée au panier / totaux (selon qty globale).
     const unitPrice = product.price
+    const totemId = `totem-product-${product.product_id}`
 
     const batch = [
       {
-        id: `totem-product-${product.product_id}`,
+        id: totemId,
         type: 'totem' as const,
         name: label,
         price: unitPrice,
@@ -243,14 +288,18 @@ export function TotemProductDetailPage() {
           format: label,
           mode: offer,
           basePrice: product.price,
+          panelSize,
+          panelPrice,
+          panelsPerUnit,
           companyName: product.company_name ?? null,
           companyTva: product.company_tva ?? null,
+          companyZip: product.company_zip ?? null,
         },
       },
       ...(panelsEnabled
         ? [
             {
-              id: `panels-product-${product.product_id}`,
+              id: `panels-for-${totemId}`,
               type: 'totem' as const,
               name: 'Panneaux imprimés laminé anti-UV dibond 3mm',
               price: panelPrice,
@@ -258,16 +307,22 @@ export function TotemProductDetailPage() {
               details: {
                 itemType: 'panels',
                 productId: product.product_id,
+                forTotemId: totemId,
+                forTotemName: label,
                 panelSize,
+                format: label,
                 panelPrice,
+                panelsPerUnit,
                 companyName: product.company_name ?? null,
                 companyTva: product.company_tva ?? null,
+                companyZip: product.company_zip ?? null,
               },
             },
           ]
         : []),
     ]
     addItems(batch)
+    closeSidebar()
 
     localStorage.setItem(
       'deliveryInfo',
@@ -275,6 +330,7 @@ export function TotemProductDetailPage() {
     )
     localStorage.setItem('shippingCostTotem', String(totemShipping.shippingTotal))
     localStorage.setItem('totemShippingBreakdown', JSON.stringify(totemShipping))
+    navigate('/panier')
   }
 
   return (
@@ -310,12 +366,7 @@ export function TotemProductDetailPage() {
                     {product.product_name.replace(/^totem\s+/i, '')}
                   </h1>
                   <p className="text-base font-semibold text-black">
-                    {formatPriceEur(totemCatalogEntryPrice(product.price))}€ HT
-                  </p>
-                  <p className="text-sm text-black mt-1">
-                    Prix catalogue : {formatPriceEur(product.price)}€ HT · Dès 5 (−10%) :{' '}
-                    {formatPriceEur(totemUnitPriceAfterDiscount(product.price, 5))}€ · Dès 10
-                    (−15%) : {formatPriceEur(totemUnitPriceAfterDiscount(product.price, 10))}€
+                    {formatPriceEur(product.price)}€ HT
                   </p>
                 </div>
                 <span className="bg-black text-white text-xs font-bold px-3 py-1 rounded-full capitalize">
@@ -435,8 +486,8 @@ export function TotemProductDetailPage() {
                           onCheckedChange={(checked) => {
                             setPanelsEnabled(checked as boolean)
                             if (checked) {
-                              setPanelsQuantity(quantity * 2)
-                              setPanelsInputValue(String(quantity * 2))
+                              setPanelsQuantity(panelsMax)
+                              setPanelsInputValue(String(panelsMax))
                             }
                           }}
                           className="mt-1"
@@ -463,24 +514,24 @@ export function TotemProductDetailPage() {
                       {panelsEnabled ? (
                         <div className="mt-3 pl-7">
                           <Label className="text-black text-sm mb-2 block">
-                            Nombre de panneaux (max {quantity * 2})
+                            Nombre de panneaux (max {panelsMax})
                           </Label>
                           <Input
                             type="number"
                             min="1"
-                            max={quantity * 2}
+                            max={panelsMax}
                             value={panelsInputValue}
                             onChange={(e) => {
                               setPanelsInputValue(e.target.value)
                               const value = parseInt(e.target.value)
                               if (!isNaN(value)) {
-                                setPanelsQuantity(Math.max(1, Math.min(quantity * 2, value)))
+                                setPanelsQuantity(Math.max(1, Math.min(panelsMax, value)))
                               }
                             }}
                             onBlur={() => {
                               const clamped = Math.max(
                                 1,
-                                Math.min(quantity * 2, panelsQuantity),
+                                Math.min(panelsMax, panelsQuantity),
                               )
                               setPanelsQuantity(clamped)
                               setPanelsInputValue(String(clamped))
@@ -489,7 +540,9 @@ export function TotemProductDetailPage() {
                           />
                           <p className="text-xs text-black mt-2">
                             <Info className="w-3 h-3 inline mr-1" />
-                            Maximum 2 panneaux par totem - Impression UV haute qualité
+                            Maximum {panelsPerUnit}{' '}
+                            {panelsPerUnit > 1 ? 'panneaux' : 'panneau'} par totem — Impression UV
+                            haute qualité
                           </p>
                         </div>
                       ) : null}
@@ -508,7 +561,7 @@ export function TotemProductDetailPage() {
                       <CardContent className="p-4">
                         <h4 className="font-bold text-black text-sm mb-2 flex items-center gap-2">
                           <Truck className="w-4 h-4 text-blue-700" />
-                          Remplissage camion — totems ({TOTEM_ORIGIN_LABEL})
+                          Remplissage camion — totems
                         </h4>
                         <p className="text-[11px] text-gray-600 mb-3">
                           {cartTotemQty > 0
@@ -566,10 +619,7 @@ export function TotemProductDetailPage() {
                         ) : null}
                         {deliveryInfoValidated ? (
                           <p className="text-[11px] text-gray-600 mt-2">
-                            Livraison estimée : {totemShipping.trucksCount} camion
-                            {totemShipping.trucksCount > 1 ? 's' : ''} ·{' '}
-                            {totemShipping.trucksCount} × ({TOTEM_TRUCK_BASE_EUR} € +{' '}
-                            {totemShipping.distanceKm} km × {TOTEM_PER_KM_EUR} €) ={' '}
+                            Livraison estimée :{' '}
                             <strong className="text-black">
                               {formatPriceEur(totemShipping.shippingTotal)}€
                             </strong>

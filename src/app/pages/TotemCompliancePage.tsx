@@ -152,10 +152,16 @@ export function TotemCompliancePage() {
     } | null = null;
 
     try {
+      // Si terrain ≠ bord de mer ET proximité cours d'eau → forcer « Rase campagne » pour la sheet
+      const terrainForApi =
+        selectedTerrain !== 'bord_mer' && nearWater === true
+          ? 'rase_campagne'
+          : selectedTerrain;
+
       const [sheetRes, ballastRes] = await Promise.all([
         lookupTotemWindSheet({
           wind_zone: windZone.zone,
-          terrain: selectedTerrain,
+          terrain: terrainForApi,
           products: totemItems.map((item) => {
             const name = (item.name || '').trim();
             const format = (item.details?.format || '').trim();
@@ -183,7 +189,8 @@ export function TotemCompliancePage() {
 
       sheetMeta = {
         region_sheet: sheetRes.region_sheet,
-        terrain_sheet: sheetRes.terrain_sheet,
+        // Affichage = terrain choisi par l’utilisateur (le forçage API reste invisible)
+        terrain_sheet: TERRAIN_CATEGORIES[selectedTerrain].label,
         write_ok: sheetRes.write_ok,
         error: null,
         error_code: null,

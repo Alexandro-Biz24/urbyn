@@ -107,6 +107,7 @@ export interface ProductFormPayload {
   price: number
   currency: string
   is_active: boolean
+  address_id: number | null
   mandatory_attributes: { definition_id: number; value: string }[]
 }
 

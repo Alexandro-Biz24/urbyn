@@ -54,6 +54,8 @@ export interface ProductRecord {
   price: number
   currency: string
   is_active: boolean
+  address_id: number | null
+  address_label: string | null
   mandatory_attributes: MandatoryAttributeValue[]
 }
 

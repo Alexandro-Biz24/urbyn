@@ -13,6 +13,7 @@ import {
   updateProductAttribute,
   type ProductFormPayload,
 } from '../../../api/supplierPortal'
+import { fetchAccountProfile } from '../../../api/orders'
 import { CatalogHelpTrigger, CatalogTreeHelpModal } from '../../../components/CatalogTreeHelp'
 import { catalogPathLabel } from '../../../lib/catalogDisplay'
 import {
@@ -49,6 +50,7 @@ const EMPTY_FORM = {
   price: '',
   currency: 'EUR',
   isActive: true,
+  addressId: null as number | null,
   mandatoryValues: {} as Record<number, string>,
 }
 
@@ -77,6 +79,25 @@ export function ProductStep({ session }: ProductStepProps) {
   const [success, setSuccess] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [treeHelpOpen, setTreeHelpOpen] = useState(false)
+  const [companyAddresses, setCompanyAddresses] = useState<
+    Array<{ id: number; label: string; zip_code: string | null; city: string | null; is_primary: boolean }>
+  >([])
+
+  useEffect(() => {
+    fetchAccountProfile()
+      .then((p) =>
+        setCompanyAddresses(
+          (p.addresses || []).map((a) => ({
+            id: a.id,
+            label: a.label || a.type,
+            zip_code: a.zip_code,
+            city: a.city,
+            is_primary: a.is_primary,
+          })),
+        ),
+      )
+      .catch(() => setCompanyAddresses([]))
+  }, [])
 
   const reloadProducts = useCallback(async () => {
     if (!lockedCatalogRef) return
@@ -175,6 +196,7 @@ export function ProductStep({ session }: ProductStepProps) {
       price: String(p.price),
       currency: p.currency,
       isActive: p.is_active,
+      addressId: p.address_id ?? null,
       mandatoryValues,
     })
     patchWizardDraft({ productId: p.id })
@@ -273,6 +295,7 @@ export function ProductStep({ session }: ProductStepProps) {
       price: Number(form.price),
       currency: form.currency,
       is_active: form.isActive,
+      address_id: form.addressId,
       mandatory_attributes: mandatoryFields.map((f) => ({
         definition_id: f.id,
         value: form.mandatoryValues[f.id].trim(),
@@ -578,6 +601,35 @@ export function ProductStep({ session }: ProductStepProps) {
                 setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))
               }
             />
+          </label>
+          <label className="field">
+            <span>Adresse d&apos;origine (expédition)</span>
+            <select
+              value={form.addressId ?? ''}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  addressId: e.target.value ? Number(e.target.value) : null,
+                }))
+              }
+            >
+              <option value="">Adresse principale de la société</option>
+              {companyAddresses.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                  {a.is_primary ? ' · principale' : ''}
+                  {a.zip_code || a.city
+                    ? ` — ${[a.zip_code, a.city].filter(Boolean).join(' ')}`
+                    : ''}
+                </option>
+              ))}
+            </select>
+            <small className="field__unit-hint">
+              Associée en plus du fournisseur. Utilisée pour la livraison / calcul de distance.
+              {companyAddresses.length === 0
+                ? ' Ajoutez des adresses dans Paramètres compte.'
+                : ''}
+            </small>
           </label>
           <label className="field checkbox-row">
             <input

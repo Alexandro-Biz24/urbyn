@@ -15,7 +15,6 @@ import { SEOMeta, productSchema, breadcrumbSchema } from '../../components/SEOMe
 import { FicheTechniqueButton } from '../../components/FicheTechniqueButton';
 import { TOTEM_INSTALLATION_EUR, isTotemInstallationSelected } from '../../lib/massifShipping';
 import {
-  totemCatalogEntryPrice,
   totemUnitPriceAfterDiscount,
   totemVolumeDiscountBanner,
 } from '../../lib/totemDiscount';
@@ -67,7 +66,7 @@ const installationServiceSelected = (): boolean => {
 
 export function TotemSignIzAcquisitionPage() {
   const navigate = useNavigate();
-  const { addItems, items, openSidebar } = useCart();
+  const { addItems, items, closeSidebar } = useCart();
 
   const [quantity, setQuantity] = useState(1);
   const [panelsEnabled, setPanelsEnabled] = useState(false);
@@ -121,26 +120,42 @@ export function TotemSignIzAcquisitionPage() {
     const existing = localStorage.getItem('deliveryAddress');
     localStorage.setItem('deliveryAddress', JSON.stringify({ ...(existing ? JSON.parse(existing) : {}), ...deliveryData }));
 
+    const totemId = 'totem-sign-iz-acquisition'
     const batch = [
       {
-        id: 'totem-sign-iz-acquisition',
+        id: totemId,
         type: 'totem' as const,
         name: 'Totem Sign-IZ',
         price: BASE_PRICE,
         quantity,
-        details: { itemType: 'totem', format: 'sign-iz', mode: 'acquisition', basePrice: BASE_PRICE },
+        details: {
+          itemType: 'totem',
+          format: 'sign-iz',
+          mode: 'acquisition',
+          basePrice: BASE_PRICE,
+          panelSize: PANEL_SIZE,
+          panelPrice: PANEL_PRICE,
+        },
       },
       ...(panelsEnabled ? [{
-        id: 'panels-sign-iz',
+        id: `panels-for-${totemId}`,
         type: 'totem' as const,
         name: 'Panneaux imprimés laminé anti-UV',
         price: PANEL_PRICE,
         quantity: panelsQuantity,
-        details: { itemType: 'panels', format: 'sign-iz', panelSize: PANEL_SIZE, panelPrice: PANEL_PRICE },
+        details: {
+          itemType: 'panels',
+          format: 'sign-iz',
+          forTotemId: totemId,
+          forTotemName: 'Totem Sign-IZ',
+          panelSize: PANEL_SIZE,
+          panelPrice: PANEL_PRICE,
+        },
       }] : []),
     ];
     addItems(batch);
-    openSidebar();
+    closeSidebar();
+    navigate('/panier');
   };
 
   return (
@@ -179,11 +194,7 @@ export function TotemSignIzAcquisitionPage() {
             <div>
               <h1 className="text-3xl font-bold mb-1 text-black">Totem Sign-IZ</h1>
               <p className="text-base font-semibold text-black">
-                {totemCatalogEntryPrice(BASE_PRICE)}€ HT
-              </p>
-              <p className="text-sm text-black mt-1">
-                Catalogue {BASE_PRICE}€ · Dès 5 : {totemUnitPriceAfterDiscount(BASE_PRICE, 5)}€ (−10%)
-                · Dès 10 : {totemUnitPriceAfterDiscount(BASE_PRICE, 10)}€ (−15%)
+                {BASE_PRICE}€ HT
               </p>
             </div>
             <div className="flex flex-col items-end gap-2 flex-shrink-0">

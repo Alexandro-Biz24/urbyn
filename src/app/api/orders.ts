@@ -141,12 +141,15 @@ export type AccountProfile = {
   addresses: Array<{
     id: number
     type: string
+    label: string | null
     street: string | null
     city: string | null
     zip_code: string | null
     state: string | null
     country_code: string | null
     is_primary: boolean
+    catalogs?: Array<{ id: number; name: string | null }>
+    catalog_ids?: number[]
   }>
 }
 
@@ -197,6 +200,7 @@ export function confirmEmailChange(code: string): Promise<AccountProfile> {
 
 export function addAccountAddress(data: {
   type?: string
+  label?: string
   street?: string
   city?: string
   zip_code?: string
@@ -213,6 +217,7 @@ export function addAccountAddress(data: {
 export function updateAccountAddress(data: {
   address_id: number
   type?: string
+  label?: string
   street?: string
   city?: string
   zip_code?: string
@@ -229,5 +234,15 @@ export function updateAccountAddress(data: {
 export function deleteAccountAddress(addressId: number): Promise<AccountProfile> {
   return apiFetch(`/api/v1/account/addresses/${addressId}?${sessionQs()}`, {
     method: 'DELETE',
+  })
+}
+
+export function setAccountAddressCatalogs(
+  addressId: number,
+  catalogIds: number[],
+): Promise<AccountProfile> {
+  return apiFetch('/api/v1/account/addresses/catalogs', {
+    method: 'PUT',
+    body: JSON.stringify(sessionBody({ address_id: addressId, catalog_ids: catalogIds })),
   })
 }

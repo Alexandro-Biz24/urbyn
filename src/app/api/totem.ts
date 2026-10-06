@@ -70,6 +70,9 @@ export interface TotemProductDetail {
   fiche_available: boolean
   company_name?: string | null
   company_tva?: string | null
+  company_zip?: string | null
+  company_city?: string | null
+  origin_address_id?: number | null
 }
 
 export function fetchTotemFamilies(offer: TotemOffer = 'Acquisition'): Promise<TotemFamiliesResponse> {

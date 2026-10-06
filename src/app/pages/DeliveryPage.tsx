@@ -4,12 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { ProgressSteps } from '../components/ProgressSteps';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { ArrowRight, Loader2, Truck } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import { DeliveryAddressForm, DeliveryAddress } from '../components/DeliveryAddressForm';
 import { useCart } from '../context/CartContext';
 import {
   MASSIF_INSTALLATION_EUR,
-  MASSIF_PER_TON_EXTRA_EUR,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
@@ -17,12 +16,11 @@ import {
 } from '../lib/massifShipping';
 import {
   TOTEM_ORIGIN_COORDS,
-  TOTEM_ORIGIN_LABEL,
-  TOTEM_PER_KM_EUR,
-  TOTEM_TRUCK_BASE_EUR,
-  TOTEM_TRUCK_CAPACITY,
-  computeTotemShipping,
+  computeTotemShippingByOrigin,
   countTotemUnits,
+  getRoadDistanceKm,
+  resolveTotemRoadDistanceKm,
+  writeTotemDistanceCache,
 } from '../lib/totemShipping';
 import {
   totemVolumeDiscountAmount,
@@ -30,40 +28,10 @@ import {
 } from '../lib/totemDiscount';
 
 // Paris — point de départ pour panneaux seuls (hors totems / massifs)
-const PARIS = { lat: 48.8603, lng: 2.3477 };
+const PARIS = { lat: 48.8414, lng: 2.2879 }; // 75015 fallback
 const PANEL_BASE_FEE = 485;
 const PANEL_PER_KM = 1.15;
 const PANEL_SURCHARGE = 300;
-
-function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const R = 6371;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((a.lat * Math.PI) / 180) *
-      Math.cos((b.lat * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-}
-
-async function getRoadDistanceKm(
-  origin: { lat: number; lng: number },
-  dest: { lat: number; lng: number },
-): Promise<number> {
-  try {
-    const url =
-      `https://router.project-osrm.org/route/v1/driving/` +
-      `${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('OSRM unavailable');
-    const data = await res.json();
-    if (data?.routes?.[0]?.distance) return data.routes[0].distance / 1000;
-    throw new Error('No route');
-  } catch {
-    return haversineKm(origin, dest) * 1.3;
-  }
-}
 
 function calcPanelShipping(distanceKm: number): number {
   return Math.ceil(PANEL_BASE_FEE + PANEL_PER_KM * distanceKm) + PANEL_SURCHARGE;
@@ -87,13 +55,20 @@ export function DeliveryPage() {
   const [shippingLoading, setShippingLoading] = useState(false);
 
   const massifItems = useMemo(
-    () => items.filter((i) => i.type === 'massif' || i.details?.itemType === 'massif'),
+    () =>
+      items.filter((i) => {
+        const t = i.details?.itemType
+        if (t === 'manille' || t === 'palette' || t === 'installation') return false
+        return i.type === 'massif' || t === 'massif'
+      }),
     [items],
   );
   const totemQty = useMemo(() => countTotemUnits(items), [items]);
   const hasMassif = massifItems.length > 0;
   const hasTotem = totemQty > 0;
-  const hasPanels = items.some((i) => i.details?.itemType === 'panels');
+  const hasPanelItems = items.some((i) => i.details?.itemType === 'panels');
+  // Transport panneaux séparés uniquement s'il n'y a pas de totems (sinon inclus dans le camion totem)
+  const hasPanelsOnly = hasPanelItems && !hasTotem;
 
   const massifShipping = useMemo(
     () =>
@@ -107,13 +82,12 @@ export function DeliveryPage() {
 
   const totemShipping = useMemo(
     () =>
-      computeTotemShipping(
-        totemQty,
+      computeTotemShippingByOrigin(
+        items,
         deliveryAddress.postalCode,
         deliveryAddress.country || 'France',
-        totemRoadKm,
       ),
-    [totemQty, deliveryAddress.postalCode, deliveryAddress.country, totemRoadKm],
+    [items, deliveryAddress.postalCode, deliveryAddress.country],
   );
 
   const massifInstallFee =
@@ -134,28 +108,37 @@ export function DeliveryPage() {
     }
   }, []);
 
-  // Distance route Rouen → livraison (totems) + Paris → livraison (panneaux seuls)
+  // Distance route Évreux → livraison (totems) + Paris → livraison (panneaux seuls)
   useEffect(() => {
-    if (!deliveryAddress.coordinates) {
+    if (!deliveryAddress.coordinates && !deliveryAddress.postalCode) {
       setTotemRoadKm(null);
-      setPanelShippingCost(hasPanels ? null : 0);
+      setPanelShippingCost(hasPanelsOnly ? null : 0);
       return;
     }
     const dest = deliveryAddress.coordinates;
     setShippingLoading(true);
     const tasks: Promise<void>[] = [];
+    const pc = deliveryAddress.postalCode?.trim() || '';
+    const country = deliveryAddress.country || 'France';
 
     if (hasTotem) {
       tasks.push(
-        getRoadDistanceKm(TOTEM_ORIGIN_COORDS, dest).then((km) => {
-          setTotemRoadKm(km);
-        }),
+        (async () => {
+          let km: number;
+          if (dest) {
+            km = await getRoadDistanceKm(TOTEM_ORIGIN_COORDS, dest);
+            if (pc) writeTotemDistanceCache(pc, country, km);
+          } else {
+            km = await resolveTotemRoadDistanceKm({ postalCode: pc, country });
+          }
+          setTotemRoadKm(Math.round(km));
+        })(),
       );
     } else {
       setTotemRoadKm(null);
     }
 
-    if (hasPanels) {
+    if (hasPanelsOnly && dest) {
       tasks.push(
         getRoadDistanceKm(PARIS, dest).then((km) => {
           setPanelShippingCost(calcPanelShipping(km));
@@ -166,18 +149,24 @@ export function DeliveryPage() {
     }
 
     Promise.all(tasks).finally(() => setShippingLoading(false));
-  }, [deliveryAddress.coordinates, hasTotem, hasPanels]);
+  }, [
+    deliveryAddress.coordinates,
+    deliveryAddress.postalCode,
+    deliveryAddress.country,
+    hasTotem,
+    hasPanelsOnly,
+  ]);
 
   const massifShipAmount = hasMassif ? massifShipping.shippingTotal : 0;
   const totemShipAmount = hasTotem ? totemShipping.shippingTotal : 0;
-  const panelShipAmount = hasPanels ? panelShippingCost ?? 0 : 0;
+  const panelShipAmount = hasPanelsOnly ? panelShippingCost ?? 0 : 0;
   const shippingCost = massifShipAmount + totemShipAmount + panelShipAmount;
   const installFees = massifInstallFee + totemInstallFee;
 
   const shippingReady =
     (!hasMassif || !!deliveryAddress.postalCode) &&
-    (!hasTotem || (!!deliveryAddress.postalCode && (totemRoadKm !== null || !!deliveryAddress.postalCode))) &&
-    (!hasPanels || panelShippingCost !== null);
+    (!hasTotem || !!deliveryAddress.postalCode) &&
+    (!hasPanelsOnly || panelShippingCost !== null);
 
   useEffect(() => {
     if (!shippingReady && !hasMassif && !hasTotem) return;
@@ -288,96 +277,44 @@ export function DeliveryPage() {
                     </span>
                   </div>
 
-                  {hasMassif && massifShipping.groups.length > 0 && (
-                    <div className="mb-3 space-y-1.5 text-xs text-gray-600 border border-gray-100 rounded-lg p-3 bg-gray-50">
-                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                        Transport massifs (séparé)
-                      </p>
-                      {massifShipping.groups.map((g) => (
-                        <div key={g.supplierKey} className="flex justify-between gap-2">
-                          <span>
-                            {g.supplierName} ({g.trucksCount} camion
-                            {g.trucksCount > 1 ? 's' : ''} · {g.distanceKm} km)
-                          </span>
+                  {(hasMassif || hasTotem || hasPanelsOnly) && (
+                    <div className="mb-3 space-y-1.5 text-xs text-gray-600">
+                      {hasTotem && totemShipAmount > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span>Totems</span>
                           <span className="font-semibold text-black shrink-0">
-                            {g.shippingTotal.toLocaleString('fr-FR', {
+                            {totemShipAmount.toLocaleString('fr-FR', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
                             })}
                             €
                           </span>
                         </div>
-                      ))}
-                      {massifShipping.tonnageFeeTotal > 0 && (
-                        <p className="text-[11px] text-gray-400 pt-1">
-                          Dont coût exceptionnel {MASSIF_PER_TON_EXTRA_EUR} €/t :{' '}
-                          {massifShipping.tonnageFeeTotal.toLocaleString('fr-FR', {
-                            minimumFractionDigits: 2,
-                          })}
-                          €
-                        </p>
                       )}
-                    </div>
-                  )}
-
-                  {hasTotem && totemShipping.trucksCount > 0 && (
-                    <div className="mb-3 space-y-2 text-xs text-gray-600 border border-blue-100 rounded-lg p-3 bg-blue-50/60">
-                      <p className="text-[11px] font-semibold text-blue-800 uppercase tracking-wide flex items-center gap-1">
-                        <Truck className="w-3.5 h-3.5" /> Transport totems depuis {TOTEM_ORIGIN_LABEL}
-                      </p>
-                      <div className="flex justify-between gap-2">
-                        <span>
-                          {totemShipping.trucksCount} camion
-                          {totemShipping.trucksCount > 1 ? 's' : ''} · {totemQty} totem
-                          {totemQty > 1 ? 's' : ''} (max {TOTEM_TRUCK_CAPACITY}/camion) ·{' '}
-                          {totemShipping.distanceKm} km
-                        </span>
-                        <span className="font-semibold text-black shrink-0">
-                          {totemShipAmount.toLocaleString('fr-FR', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                          €
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-gray-500">
-                        {totemShipping.trucksCount} × ({TOTEM_TRUCK_BASE_EUR} € +{' '}
-                        {totemShipping.distanceKm} km × {TOTEM_PER_KM_EUR} €)
-                      </p>
-                      <div className="space-y-1.5 pt-1">
-                        {totemShipping.truckFills.map((fill, idx) => (
-                          <div key={idx}>
-                            <div className="flex justify-between text-[10px] mb-0.5">
-                              <span>
-                                Camion {idx + 1}
-                                {totemShipping.truckLoads[idx] != null
-                                  ? ` · ${totemShipping.truckLoads[idx]}/${TOTEM_TRUCK_CAPACITY}`
-                                  : ''}
-                              </span>
-                              <span>{Math.round(fill)}%</span>
-                            </div>
-                            <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-blue-600 transition-all"
-                                style={{ width: `${Math.min(100, fill)}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {hasPanels && panelShipAmount > 0 && (
-                    <div className="mb-3 flex justify-between gap-2 text-xs text-gray-600 border border-gray-100 rounded-lg p-3 bg-gray-50">
-                      <span>Transport panneaux</span>
-                      <span className="font-semibold text-black">
-                        {panelShipAmount.toLocaleString('fr-FR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                        €
-                      </span>
+                      {hasMassif && massifShipAmount > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span>Massifs</span>
+                          <span className="font-semibold text-black shrink-0">
+                            {massifShipAmount.toLocaleString('fr-FR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                            €
+                          </span>
+                        </div>
+                      )}
+                      {hasPanelsOnly && panelShipAmount > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span>Panneaux</span>
+                          <span className="font-semibold text-black shrink-0">
+                            {panelShipAmount.toLocaleString('fr-FR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                            €
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -10,20 +10,30 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { cn } from './ui/utils';
 import { useCart } from '../context/CartContext';
 import {
-  MASSIF_PER_TON_EXTRA_EUR,
   MASSIF_TRUCK_BASE_EUR,
   computeMassifShippingBySupplier,
   estimateDistanceKm,
   mergeMassifCartAndDraft,
+  truckDedicatedLabel,
   trucksForWeight,
 } from '../lib/massifShipping';
 import {
   extractManilleType,
   manilleCartId,
   manilleTypesMatch,
+  maxManilleQtyByType,
   normalizeManilleType,
+  resolveManilleNeed,
+  consolidateManilleNeeds,
+  findCoveringManilleType,
+  manilleCapacityCovers,
 } from '../lib/massifManille';
-import { fetchMassifManilles, type MassifManille } from '../api/massif';
+import {
+  MASSIF_PALETTE_CART_ID,
+  extractNbMassifPerPalette,
+  totalPalettesForMassifs,
+} from '../lib/massifPalette';
+import { fetchMassifManilles, fetchMassifPalette, resolveMassifOfferFromSession, type MassifManille, type MassifPalette } from '../api/massif';
 import massifImg from 'figma:asset/massif-beton-cubique.png';
 import massifLegoImg from 'figma:asset/massif-beton-lego.png';
 
@@ -42,6 +52,7 @@ const POSTAL_RULES: Record<string, { pattern: RegExp; example: string }> = {
 export type MassifType = 'cubique' | 'lego' | 'cylindrique' | 'stabilize' | 'candelabre';
 export type MassifDimension = string;
 export type MassifOption = 'reservation' | 'tiges' | 'tiges-300' | 'aucun';
+export type RALColor = '9006' | '9005' | '7016' | '9002' | '3009' | '6005' | '8012' | '1015';
 
 export type MassifProductAttr = { label: string; value: string };
 
@@ -59,6 +70,13 @@ export type MassifApiProduct = {
   company_zip?: string | null;
   company_city?: string | null;
   company_country?: string | null;
+  free_attributes?: Array<{ id?: number; name: string; value: string | null }>;
+  mandatory_attributes?: Array<{
+    definition_id?: number;
+    catalog_id?: number;
+    attribute_name: string;
+    value: string | null;
+  }>;
   dimensions?: {
     longueur: number | null;
     largeur: number | null;
@@ -78,6 +96,8 @@ export type MassifItem = {
   catalogId?: number;
   catalogName?: string | null;
   attributes?: MassifProductAttr[];
+  manilleType?: string | null;
+  manilleNombre?: number | null;
 };
 
 export interface MassifConfig {
@@ -234,6 +254,8 @@ interface ItemState {
   catalogId?: number;
   catalogName?: string | null;
   attributes?: MassifProductAttr[];
+  manilleType?: string | null;
+  manilleNombre?: number | null;
 }
 
 function itemUnitWeight(it: ItemState): number {
@@ -248,6 +270,14 @@ function itemUnitPrice(it: ItemState): number {
   return getDataSet(it.type)[it.dimension]?.prices[it.option] ?? 0;
 }
 
+function isMassifCartLine(i: { type?: string; details?: { itemType?: string } }) {
+  return (
+    (i.type === 'massif' || i.details?.itemType === 'massif') &&
+    i.details?.itemType !== 'manille' &&
+    i.details?.itemType !== 'palette'
+  );
+}
+
 export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculatorProps) {
   const navigate = useNavigate();
   const { addItems, removeItem: removeCartItem, items: cartItems } = useCart();
@@ -260,6 +290,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
   const [manilles, setManilles] = useState<MassifManille[]>([]);
   /** Types manille explicitement voulus sur cet écran (clé = manilleType normalisé). */
   const [wantedManilleTypes, setWantedManilleTypes] = useState<Record<string, boolean>>({});
+  const [paletteProduct, setPaletteProduct] = useState<MassifPalette | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('deliveryInfo');
@@ -273,12 +304,20 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
 
   useEffect(() => {
     let cancelled = false;
-    fetchMassifManilles()
+    const offer = resolveMassifOfferFromSession();
+    fetchMassifManilles({ offer })
       .then((res) => {
         if (!cancelled) setManilles(res.manilles ?? []);
       })
       .catch(() => {
         if (!cancelled) setManilles([]);
+      });
+    fetchMassifPalette({ offer })
+      .then((res) => {
+        if (!cancelled) setPaletteProduct(res.palette ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPaletteProduct(null);
       });
     return () => {
       cancelled = true;
@@ -309,6 +348,8 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
             catalogId: item.catalogId,
             catalogName: item.catalogName,
             attributes: item.attributes ?? [],
+            manilleType: item.manilleType ?? null,
+            manilleNombre: item.manilleNombre ?? null,
           };
         }
         const data = getDataSet(item.type)[item.dimension];
@@ -361,41 +402,58 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
   }, [cartItems]);
 
   const manilleTypeOfItem = (it: ItemState): string | null =>
+    (it.manilleType && String(it.manilleType).trim()) ||
     extractManilleType({
       attributes: it.attributes,
-      free_attributes: (
-        it.product as { free_attributes?: Array<{ name?: string; value?: string | null }> } | undefined
-      )?.free_attributes,
-      mandatory_attributes: (
-        it.product as {
-          mandatory_attributes?: Array<{ attribute_name?: string; value?: string | null }>
-        } | undefined
-      )?.mandatory_attributes,
+      free_attributes: it.product?.free_attributes,
+      mandatory_attributes: it.product?.mandatory_attributes,
     });
 
   const resolveManilleForItem = (it: ItemState): MassifManille | null => {
     const t = manilleTypeOfItem(it);
     if (!t) return null;
-    return manilleByType.get(normalizeManilleType(t)) ?? null;
+    // Préférer une manille déjà au panier / en catalogue qui couvre la capacité
+    const availableTypes = [
+      ...cartManilleTypes,
+      ...manilles.map((m) => m.manille_type),
+    ];
+    const coverType = findCoveringManilleType(t, availableTypes) ?? t;
+    return (
+      manilleByType.get(normalizeManilleType(coverType)) ??
+      manilleByType.get(normalizeManilleType(t)) ??
+      null
+    );
   };
 
   /** Manille cochée pour ce massif (panier mutualisé OU choix local). */
   const isManilleChecked = (it: ItemState): boolean => {
+    const needType = manilleTypeOfItem(it);
+    if (!needType) return false;
+    // Déjà couvert par une manille panier de capacité ≥
+    for (const cartType of cartManilleTypes) {
+      if (manilleCapacityCovers(cartType, needType)) return true;
+    }
     const manille = resolveManilleForItem(it);
     if (!manille) return false;
     const key = normalizeManilleType(manille.manille_type);
-    if (cartManilleTypes.has(key)) return true;
-    return Boolean(wantedManilleTypes[key]);
+    return Boolean(wantedManilleTypes[key] || wantedManilleTypes[normalizeManilleType(needType)]);
   };
 
   const toggleManille = (it: ItemState, nextChecked: boolean) => {
+    const needType = manilleTypeOfItem(it);
+    if (!needType) return;
     const manille = resolveManilleForItem(it);
     if (!manille) return;
     const key = normalizeManilleType(manille.manille_type);
+    const needKey = normalizeManilleType(needType);
     const cartId = manilleCartId(manille.manille_type);
 
     if (nextChecked) {
-      setWantedManilleTypes((prev) => ({ ...prev, [key]: true }));
+      // Si déjà couvert par une manille plus forte au panier → rien à ajouter
+      for (const cartType of cartManilleTypes) {
+        if (manilleCapacityCovers(cartType, needType)) return;
+      }
+      setWantedManilleTypes((prev) => ({ ...prev, [key]: true, [needKey]: true }));
       return;
     }
 
@@ -403,9 +461,17 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
     setWantedManilleTypes((prev) => {
       const copy = { ...prev };
       delete copy[key];
+      delete copy[needKey];
       return copy;
     });
-    if (cartItems.some((c) => c.id === cartId || (c.details?.itemType === 'manille' && manilleTypesMatch(String(c.details?.manilleType || ''), manille.manille_type)))) {
+    if (
+      cartItems.some(
+        (c) =>
+          c.id === cartId ||
+          (c.details?.itemType === 'manille' &&
+            manilleTypesMatch(String(c.details?.manilleType || ''), manille.manille_type)),
+      )
+    ) {
       removeCartItem(cartId);
     }
   };
@@ -455,32 +521,107 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
     [completedItems],
   );
 
-  /** Manilles cochées sur cet écran, 1× par type (mutualisées). */
+  const manilleNeedOfItem = (it: ItemState) =>
+    resolveManilleNeed({
+      manilleType: it.manilleType,
+      manilleNombre: it.manilleNombre,
+      attributes: it.attributes,
+      free_attributes: it.product?.free_attributes,
+      mandatory_attributes: it.product?.mandatory_attributes,
+    });
+
+  const cartManilleQtyByType = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of cartItems) {
+      if (c.details?.itemType !== 'manille') continue;
+      const t = normalizeManilleType(String(c.details?.manilleType || ''));
+      if (t) map.set(t, Math.max(map.get(t) ?? 0, c.quantity));
+    }
+    return map;
+  }, [cartItems]);
+
+  /** Max par type = panier massifs + sélection courante, consolidé par capacité. */
+  const combinedManilleNeeds = useMemo(() => {
+    const lines: Array<{
+      manilleType?: string | null;
+      manilleNombre?: number | null;
+      attributes?: Array<{ label?: string; name?: string; attribute_name?: string; value?: string | null }>;
+      free_attributes?: Array<{ name?: string; value?: string | null }>;
+      mandatory_attributes?: Array<{ attribute_name?: string; value?: string | null }>;
+    }> = [];
+    for (const c of cartItems) {
+      if (!isMassifCartLine(c)) continue;
+      lines.push({
+        manilleType: c.details?.manilleType,
+        manilleNombre: c.details?.manilleNombre,
+        attributes: c.details?.attributes,
+      });
+    }
+    for (const it of completedItems) {
+      lines.push({
+        manilleType: it.manilleType,
+        manilleNombre: it.manilleNombre,
+        attributes: it.attributes,
+        free_attributes: it.product?.free_attributes,
+        mandatory_attributes: it.product?.mandatory_attributes,
+      });
+    }
+    const raw = maxManilleQtyByType(lines);
+    const coverTypes = [
+      ...cartManilleTypes,
+      ...Object.keys(wantedManilleTypes).filter((k) => wantedManilleTypes[k]),
+    ];
+    return consolidateManilleNeeds([...raw.values()], coverTypes);
+  }, [cartItems, completedItems, cartManilleTypes, wantedManilleTypes]);
+
+  /** Manilles cochées sur cet écran, 1 ligne par type consolidé (qty = max mutualisé). */
   const selectedManilles = useMemo(() => {
-    const map = new Map<string, MassifManille>();
+    const map = new Map<string, { manille: MassifManille; qty: number }>();
     for (const it of completedItems) {
       if (!isManilleChecked(it)) continue;
       const m = resolveManilleForItem(it);
       if (!m) continue;
       const key = normalizeManilleType(m.manille_type);
-      if (!map.has(key)) map.set(key, m);
+      const qty = combinedManilleNeeds.get(key)?.qty ?? manilleNeedOfItem(it)?.qty ?? 1;
+      if (!map.has(key)) map.set(key, { manille: m, qty });
     }
     return [...map.values()];
-  }, [completedItems, manilleByType, cartManilleTypes, wantedManilleTypes]);
+  }, [completedItems, manilleByType, cartManilleTypes, wantedManilleTypes, combinedManilleNeeds]);
 
   const manilleSelectionExtra = useMemo(
     () =>
-      selectedManilles
-        .filter((m) => !cartManilleTypes.has(normalizeManilleType(m.manille_type)))
-        .reduce((s, m) => s + m.price, 0),
-    [selectedManilles, cartManilleTypes],
+      selectedManilles.reduce((s, { manille, qty }) => {
+        const key = normalizeManilleType(manille.manille_type);
+        const already = cartManilleQtyByType.get(key) ?? 0;
+        return s + Math.max(0, qty - already) * manille.price;
+      }, 0),
+    [selectedManilles, cartManilleQtyByType],
   );
 
-  const productsAndManilleTotal = totalPrice + manilleSelectionExtra;
+  const nbMassifPerPaletteOfItem = (it: ItemState): number =>
+    extractNbMassifPerPalette({
+      attributes: it.attributes,
+    });
 
-  const isMassifCartLine = (i: { type?: string; details?: { itemType?: string } }) =>
-    (i.type === 'massif' || i.details?.itemType === 'massif') &&
-    i.details?.itemType !== 'manille';
+  /** Palettes obligatoires pour la sélection courante (mutualisées). */
+  const selectionPaletteQty = useMemo(
+    () =>
+      totalPalettesForMassifs(
+        completedItems.map((it) => ({
+          quantity: it.quantity,
+          nbMassifPerPalette: nbMassifPerPaletteOfItem(it),
+        })),
+      ),
+    [completedItems],
+  );
+
+  const selectionPaletteTotal =
+    paletteProduct && selectionPaletteQty > 0
+      ? paletteProduct.price * selectionPaletteQty
+      : 0;
+
+  const productsAndManilleTotal =
+    totalPrice + manilleSelectionExtra + selectionPaletteTotal;
 
   const cartMassifWeight = useMemo(
     () =>
@@ -496,6 +637,10 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
         it.fromApi && it.product
           ? `massif-api-${it.product.product_id}`
           : `massif-${it.type}-${it.dimension}-${it.option}`,
+      name:
+        it.fromApi && it.product
+          ? it.product.product_name
+          : `Massif ${it.type ?? ''}`.trim(),
       quantity: it.quantity,
       type: 'massif' as const,
       details: {
@@ -557,8 +702,10 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
     );
 
     const cartPayload = completedItems.map((it) => {
+      const manilleNeed = manilleNeedOfItem(it);
       if (it.fromApi && it.product) {
         const unit = itemUnitPrice(it);
+        const nbMassifPerPalette = nbMassifPerPaletteOfItem(it);
         return {
           id: `massif-api-${it.product.product_id}`,
           type: 'massif' as const,
@@ -576,6 +723,9 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
             description: it.product.description ?? null,
             weight: it.product.poids,
             attributes: it.attributes ?? [],
+            nbMassifPerPalette,
+            manilleType: manilleNeed?.type ?? null,
+            manilleNombre: manilleNeed?.qty ?? null,
             dimensions: it.product.dimensions,
             currency: it.product.currency,
             companyName: it.product.company_name ?? null,
@@ -613,17 +763,21 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
           option: it.option,
           weight: data?.weight ?? 0,
           totalWeight: (data?.weight ?? 0) * it.quantity,
+          nbMassifPerPalette: nbMassifPerPaletteOfItem(it),
+          manilleType: manilleNeed?.type ?? null,
+          manilleNombre: manilleNeed?.qty ?? null,
+          attributes: it.attributes ?? [],
           deliveryPostalCode,
           deliveryCountry,
         },
       };
     });
-    const manillePayload = selectedManilles.map((m) => ({
+    const manillePayload = selectedManilles.map(({ manille: m, qty }) => ({
       id: manilleCartId(m.manille_type),
       type: 'massif' as const,
       name: `${m.product_name} (${m.manille_type})`,
       price: m.price,
-      quantity: 1,
+      quantity: qty,
       details: {
         itemType: 'manille',
         productId: m.product_id,
@@ -631,7 +785,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
         manilleType: m.manille_type,
         description: m.description,
         weight: m.poids ?? 0,
-        totalWeight: m.poids ?? 0,
+        totalWeight: (m.poids ?? 0) * qty,
         companyName: m.company_name,
         companyTva: m.company_tva,
         currency: m.currency,
@@ -639,7 +793,38 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
         deliveryCountry,
       },
     }));
-    addItems([...cartPayload, ...manillePayload]);
+    const paletteQty = totalPalettesForMassifs(
+      cartPayload.map((p) => ({
+        quantity: p.quantity,
+        nbMassifPerPalette: p.details?.nbMassifPerPalette,
+      })),
+    );
+    const palettePayload =
+      paletteProduct && paletteQty > 0
+        ? [
+            {
+              id: MASSIF_PALETTE_CART_ID,
+              type: 'massif' as const,
+              name: paletteProduct.product_name,
+              price: paletteProduct.price,
+              quantity: paletteQty,
+              details: {
+                itemType: 'palette',
+                productId: paletteProduct.product_id,
+                sku: paletteProduct.admin_sku,
+                description: paletteProduct.description,
+                weight: paletteProduct.poids ?? 0,
+                totalWeight: (paletteProduct.poids ?? 0) * paletteQty,
+                companyName: paletteProduct.company_name,
+                companyTva: paletteProduct.company_tva,
+                currency: paletteProduct.currency,
+                deliveryPostalCode,
+                deliveryCountry,
+              },
+            },
+          ]
+        : [];
+    addItems([...cartPayload, ...manillePayload, ...palettePayload]);
 
     const afterAdd = computeMassifShippingBySupplier(
       mergeMassifCartAndDraft(
@@ -975,11 +1160,15 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                             {(() => {
                               const manille = resolveManilleForItem(item);
                               const checked = isManilleChecked(item);
+                              const typeKey = manille
+                                ? normalizeManilleType(manille.manille_type)
+                                : '';
+                              const neededQty =
+                                (typeKey && combinedManilleNeeds.get(typeKey)?.qty) ||
+                                manilleNeedOfItem(item)?.qty ||
+                                1;
                               const inCartAlready =
-                                manille != null &&
-                                cartManilleTypes.has(
-                                  normalizeManilleType(manille.manille_type),
-                                );
+                                manille != null && cartManilleTypes.has(typeKey);
                               return (
                                 <div
                                   className={cn(
@@ -1014,17 +1203,25 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                                           <span className="block text-xs text-gray-600 mt-0.5">
                                             {manille.description || manille.product_name}
                                           </span>
+                                          <span className="block text-xs text-gray-500 mt-0.5">
+                                            Manille Nombre (ce massif) :{' '}
+                                            {manilleNeedOfItem(item)?.qty ?? 1}
+                                            {neededQty !== (manilleNeedOfItem(item)?.qty ?? 1)
+                                              ? ` → max mutualisé : ${neededQty}`
+                                              : ''}
+                                          </span>
                                           <span className="block text-sm font-bold text-black mt-1">
-                                            {formatEuro(manille.price, manille.currency)} HT
+                                            {formatEuro(manille.price * neededQty, manille.currency)}{' '}
+                                            HT
                                             <span className="font-normal text-gray-500">
                                               {' '}
-                                              · 1 unité (mutualisée)
+                                              · {neededQty} unité{neededQty > 1 ? 's' : ''}
                                             </span>
                                           </span>
                                           {inCartAlready ? (
                                             <span className="block text-[11px] text-emerald-700 mt-1">
-                                              Déjà dans le panier pour ce type — partagée avec vos
-                                              autres massifs compatibles.
+                                              Déjà dans le panier pour ce type — quantité alignée
+                                              sur le besoin max de tous les massifs.
                                             </span>
                                           ) : null}
                                         </>
@@ -1035,6 +1232,26 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                                       )}
                                     </span>
                                   </label>
+                                </div>
+                              );
+                            })()}
+
+                            {(() => {
+                              const nb = nbMassifPerPaletteOfItem(item);
+                              const need = totalPalettesForMassifs([
+                                { quantity: item.quantity, nbMassifPerPalette: nb },
+                              ]);
+                              if (!paletteProduct || need <= 0) return null;
+                              return (
+                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs space-y-0.5">
+                                  <p className="font-semibold text-black">
+                                    Palette ×{need} (obligatoire)
+                                  </p>
+                                  <p className="text-gray-500">
+                                    {nb} massif{nb > 1 ? 's' : ''} / palette ·{' '}
+                                    {formatEuro(paletteProduct.price * need, paletteProduct.currency)}{' '}
+                                    HT
+                                  </p>
                                 </div>
                               );
                             })()}
@@ -1335,7 +1552,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                         <div key={`${group.supplierKey}-${gi}`} className="space-y-2">
                           {(shippingBySupplier.groups.length > 1 || cartMassifWeight > 0) && (
                             <p className="text-xs font-semibold text-gray-700">
-                              {group.supplierName}
+                              {truckDedicatedLabel(group.productLabels)}
                               <span className="font-normal text-gray-500">
                                 {' '}
                                 · {(group.totalWeightKg / 1000).toFixed(2)} t
@@ -1369,12 +1586,8 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                           })}
                           {deliveryInfoValidated && (
                             <p className="text-[11px] text-gray-500">
-                              {group.trucksCount} × 200 € + {group.trucksCount} × {group.distanceKm}{' '}
-                              km
-                              {group.tonnageFee > 0
-                                ? ` + ${MASSIF_PER_TON_EXTRA_EUR} €/t (${formatEuro(group.tonnageFee)})`
-                                : ''}{' '}
-                              = <strong className="text-black">{formatEuro(group.shippingTotal)}</strong>
+                              Livraison :{' '}
+                              <strong className="text-black">{formatEuro(group.shippingTotal)}</strong>
                             </p>
                           )}
                         </div>
@@ -1496,43 +1709,47 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                     </div>
                     {selectedManilles.length > 0 ? (
                       <div className="space-y-1">
-                        {selectedManilles.map((m) => {
-                          const inCart = cartManilleTypes.has(
-                            normalizeManilleType(m.manille_type),
-                          );
+                        {selectedManilles.map(({ manille: m, qty }) => {
+                          const key = normalizeManilleType(m.manille_type);
+                          const already = cartManilleQtyByType.get(key) ?? 0;
+                          const delta = Math.max(0, qty - already);
                           return (
                             <div
                               key={m.product_id}
                               className="flex justify-between gap-3 text-xs"
                             >
                               <span className="text-gray-600">
-                                Manille {m.manille_type}
-                                {inCart ? ' (déjà au panier)' : ''}
+                                Manille {m.manille_type} ×{qty}
+                                {already > 0 ? ` (déjà ${already} au panier)` : ''}
                               </span>
                               <span className="font-semibold text-black">
-                                {inCart ? '—' : formatEuro(m.price)}
+                                {delta > 0 ? formatEuro(m.price * delta) : '—'}
                               </span>
                             </div>
                           );
                         })}
                       </div>
                     ) : null}
+                    {paletteProduct && selectionPaletteQty > 0 ? (
+                      <div className="flex justify-between gap-3 text-xs">
+                        <span className="text-gray-600">
+                          Palette ×{selectionPaletteQty} (obligatoire)
+                        </span>
+                        <span className="font-semibold text-black">
+                          {formatEuro(selectionPaletteTotal, paletteProduct.currency)}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between gap-3">
                       <span className="text-gray-600 flex items-center gap-1.5">
                         <Truck className="w-3.5 h-3.5" />
-                        Livraison mutualisée
+                        Livraison
                         {cartMassifWeight > 0 ? ' (panier + sélection)' : ''}
                       </span>
                       <span className="font-semibold text-black">
                         {deliveryEstimate != null ? formatEuro(deliveryEstimate) : '—'}
                       </span>
                     </div>
-                    {deliveryInfoValidated && deliveryEstimate != null && (
-                      <p className="text-[11px] text-gray-400 leading-snug">
-                        Même formule qu&apos;à la validation : 200 €/camion + 1 €/km × camions +{' '}
-                        {MASSIF_PER_TON_EXTRA_EUR} €/t, groupé par fournisseur.
-                      </p>
-                    )}
                     <div className="flex justify-between gap-3 pt-2 border-t border-gray-200 text-base">
                       <span className="font-bold text-black">
                         {cartMassifWeight > 0

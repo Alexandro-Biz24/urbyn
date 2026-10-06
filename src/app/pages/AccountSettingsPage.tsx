@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -12,11 +12,14 @@ import {
   confirmEmailChange,
   deleteAccountAddress,
   fetchAccountProfile,
+  setAccountAddressCatalogs,
   startEmailChange,
   updateAccountAddress,
   updateAccountProfile,
   type AccountProfile,
 } from '../api/orders'
+import { fetchCatalogs } from '../api/supplierPortal'
+import type { CatalogRecord } from '../types/supplierPortal'
 
 export function AccountSettingsPage() {
   const navigate = useNavigate()
@@ -43,6 +46,12 @@ export function AccountSettingsPage() {
   const [addrCity, setAddrCity] = useState('')
   const [addrZip, setAddrZip] = useState('')
   const [addrCountry, setAddrCountry] = useState('FR')
+  const [addrLabel, setAddrLabel] = useState('')
+
+  const [catalogs, setCatalogs] = useState<CatalogRecord[]>([])
+  const [catalogFilter, setCatalogFilter] = useState('')
+  const [draftCatalogIds, setDraftCatalogIds] = useState<Record<number, number[]>>({})
+  const [savingCatalogsFor, setSavingCatalogsFor] = useState<number | null>(null)
 
   const backPath = isSupplier ? '/fournisseur/leads' : '/compte/commandes'
 
@@ -59,14 +68,69 @@ export function AccountSettingsPage() {
         setLastName(p.last_name || '')
         setMobile(p.mobile_phone || '')
         setTitle(p.title || '')
+        const drafts: Record<number, number[]> = {}
+        for (const a of p.addresses || []) {
+          drafts[a.id] = a.catalog_ids || a.catalogs?.map((c) => c.id) || []
+        }
+        setDraftCatalogIds(drafts)
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Erreur'))
       .finally(() => setLoading(false))
   }, [ready, isLoggedIn, navigate])
 
+  useEffect(() => {
+    if (!ready || !isLoggedIn || !isSupplier || !session) return
+    fetchCatalogs({ user_id: session.user_id, email: session.email })
+      .then(setCatalogs)
+      .catch(() => {
+        /* catalogue optionnel si API indisponible */
+      })
+  }, [ready, isLoggedIn, isSupplier, session])
+
+  const filteredCatalogs = useMemo(() => {
+    const q = catalogFilter.trim().toLowerCase()
+    if (!q) return catalogs
+    return catalogs.filter((c) => {
+      const name = (c.name || '').toLowerCase()
+      const crumb = (c.breadcrumb || []).join(' ').toLowerCase()
+      return name.includes(q) || crumb.includes(q) || String(c.id).includes(q)
+    })
+  }, [catalogs, catalogFilter])
+
   const flash = (ok: string) => {
     setMsg(ok)
     setError(null)
+  }
+
+  const toggleCatalog = (addressId: number, catalogId: number) => {
+    setDraftCatalogIds((prev) => {
+      const current = new Set(prev[addressId] || [])
+      if (current.has(catalogId)) current.delete(catalogId)
+      else current.add(catalogId)
+      return { ...prev, [addressId]: [...current].sort((a, b) => a - b) }
+    })
+  }
+
+  const saveCatalogs = async (addressId: number) => {
+    setError(null)
+    setSavingCatalogsFor(addressId)
+    try {
+      const p = await setAccountAddressCatalogs(
+        addressId,
+        draftCatalogIds[addressId] || [],
+      )
+      setProfile(p)
+      const drafts: Record<number, number[]> = {}
+      for (const a of p.addresses || []) {
+        drafts[a.id] = a.catalog_ids || a.catalogs?.map((c) => c.id) || []
+      }
+      setDraftCatalogIds(drafts)
+      flash('Catalogues associés à l’adresse.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur')
+    } finally {
+      setSavingCatalogsFor(null)
+    }
   }
 
   const saveProfile = async () => {
@@ -145,8 +209,10 @@ export function AccountSettingsPage() {
   const addAddress = async () => {
     setError(null)
     try {
+      const label = addrLabel.trim() || 'Adresse'
       const p = await addAccountAddress({
         type: 'delivery',
+        label,
         street: addrStreet,
         city: addrCity,
         zip_code: addrZip,
@@ -157,6 +223,7 @@ export function AccountSettingsPage() {
       setAddrStreet('')
       setAddrCity('')
       setAddrZip('')
+      setAddrLabel('')
       flash('Adresse ajoutée.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur')
@@ -264,70 +331,148 @@ export function AccountSettingsPage() {
 
         <section className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
           <h2 className="font-bold text-black">Adresses</h2>
-          {(profile?.addresses || []).map((a) => (
-            <div
-              key={a.id}
-              className="flex justify-between gap-3 border border-gray-100 rounded-lg p-3 text-sm"
-            >
-              <div>
-                <p className="font-medium text-black">
-                  {a.type}
-                  {a.is_primary ? ' · principale' : ''}
-                </p>
-                <p className="text-gray-600">
-                  {[a.street, `${a.zip_code || ''} ${a.city || ''}`.trim(), a.country_code]
-                    .filter(Boolean)
-                    .join(', ')}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {!a.is_primary ? (
-                  <button
-                    type="button"
-                    className="text-xs underline text-gray-600"
-                    onClick={async () => {
-                      try {
-                        const p = await updateAccountAddress({
-                          address_id: a.id,
-                          type: a.type,
-                          street: a.street || undefined,
-                          city: a.city || undefined,
-                          zip_code: a.zip_code || undefined,
-                          country_code: a.country_code || 'FR',
-                          is_primary: true,
+          {isSupplier ? (
+            <p className="text-xs text-gray-500">
+              Associez un ou plusieurs catalogues à chaque adresse labellisée. Les produits
+              de votre société dans ces catalogues (et sous-catalogues) partiront de cette
+              adresse pour le calcul de livraison. Sans association → fallback 75015.
+            </p>
+          ) : null}
+          {isSupplier && catalogs.length > 0 ? (
+            <Input
+              placeholder="Filtrer les catalogues…"
+              value={catalogFilter}
+              onChange={(e) => setCatalogFilter(e.target.value)}
+            />
+          ) : null}
+          {(profile?.addresses || []).map((a) => {
+            const selected = new Set(draftCatalogIds[a.id] || [])
+            return (
+              <div
+                key={a.id}
+                className="border border-gray-100 rounded-lg p-3 text-sm space-y-3"
+              >
+                <div className="flex justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-black">
+                      {a.label || a.type}
+                      {a.is_primary ? ' · principale' : ''}
+                    </p>
+                    <p className="text-gray-600">
+                      {[a.street, `${a.zip_code || ''} ${a.city || ''}`.trim(), a.country_code]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </p>
+                    {(a.catalogs || []).length > 0 ? (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Catalogues liés :{' '}
+                        {(a.catalogs || []).map((c) => c.name || `#${c.id}`).join(', ')}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    {!a.is_primary ? (
+                      <button
+                        type="button"
+                        className="text-xs underline text-gray-600"
+                        onClick={async () => {
+                          try {
+                            const p = await updateAccountAddress({
+                              address_id: a.id,
+                              type: a.type,
+                              label: a.label || a.type,
+                              street: a.street || undefined,
+                              city: a.city || undefined,
+                              zip_code: a.zip_code || undefined,
+                              country_code: a.country_code || 'FR',
+                              is_primary: true,
+                            })
+                            setProfile(p)
+                            flash('Adresse principale mise à jour.')
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Erreur')
+                          }
+                        }}
+                      >
+                        Principale
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="text-red-500"
+                      onClick={async () => {
+                        try {
+                          setProfile(await deleteAccountAddress(a.id))
+                          flash('Adresse supprimée.')
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : 'Erreur')
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {isSupplier ? (
+                  <div className="border-t border-gray-50 pt-2 space-y-2">
+                    <p className="text-xs font-medium text-gray-700">
+                      Catalogues / sous-catalogues expédiés depuis cette adresse
+                    </p>
+                    <div className="max-h-40 overflow-y-auto space-y-1 rounded border border-gray-100 p-2">
+                      {filteredCatalogs.length === 0 ? (
+                        <p className="text-xs text-gray-400">Aucun catalogue trouvé.</p>
+                      ) : (
+                        filteredCatalogs.map((c) => {
+                          const checked = selected.has(c.id)
+                          const label =
+                            (c.breadcrumb && c.breadcrumb.length
+                              ? c.breadcrumb.join(' / ')
+                              : null) ||
+                            c.name ||
+                            `Catalogue #${c.id}`
+                          return (
+                            <label
+                              key={c.id}
+                              className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5"
+                                checked={checked}
+                                onChange={() => toggleCatalog(a.id, c.id)}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          )
                         })
-                        setProfile(p)
-                        flash('Adresse principale mise à jour.')
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Erreur')
-                      }
-                    }}
-                  >
-                    Principale
-                  </button>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      className="bg-black text-white"
+                      disabled={savingCatalogsFor === a.id}
+                      onClick={() => saveCatalogs(a.id)}
+                    >
+                      {savingCatalogsFor === a.id
+                        ? 'Enregistrement…'
+                        : 'Enregistrer les catalogues'}
+                    </Button>
+                  </div>
                 ) : null}
-                <button
-                  type="button"
-                  className="text-red-500"
-                  onClick={async () => {
-                    try {
-                      setProfile(await deleteAccountAddress(a.id))
-                      flash('Adresse supprimée.')
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : 'Erreur')
-                    }
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
               </div>
-            </div>
-          ))}
+            )
+          })}
 
           <div className="border-t border-gray-100 pt-3 space-y-2">
             <p className="text-sm font-medium flex items-center gap-1">
               <Plus className="w-4 h-4" /> Ajouter une adresse
             </p>
+            <Input
+              placeholder="Libellé (ex. Entrepôt Lyon, Entrepôt Paris)"
+              value={addrLabel}
+              onChange={(e) => setAddrLabel(e.target.value)}
+            />
             <Input placeholder="Rue" value={addrStreet} onChange={(e) => setAddrStreet(e.target.value)} />
             <div className="grid grid-cols-2 gap-2">
               <Input placeholder="Code postal" value={addrZip} onChange={(e) => setAddrZip(e.target.value)} />

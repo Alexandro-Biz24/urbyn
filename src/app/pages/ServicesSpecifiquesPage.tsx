@@ -293,7 +293,9 @@ export function ServicesSpecifiquesPage() {
     } else if (product === 'panneau-chantier') {
       navigate(`/services-additionnels/${product}`);
     } else if (product === 'massif-beton') {
-      navigate('/massif/selection');
+      const mode = selectedServices.includes('location') ? 'location' : 'acquisition';
+      sessionStorage.setItem('massifMode', mode);
+      navigate(`/massif/selection?offer=${mode}`);
     } else {
       navigate(`/services-additionnels/${product}`);
     }

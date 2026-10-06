@@ -76,7 +76,7 @@ export function OrdersPage() {
               </Button>
             ) : null}
             <h1 className="text-2xl font-bold text-black">
-              {selected ? `Commande #${selected.id}` : 'Commandes'}
+              {selected ? `Devis #${selected.id}` : 'Devis'}
             </h1>
           </div>
           <Link
@@ -93,7 +93,7 @@ export function OrdersPage() {
         {!loading && !selected && orders.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
             <Package className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-            <p className="text-gray-600 mb-4">Aucune commande pour le moment.</p>
+            <p className="text-gray-600 mb-4">Aucun devis pour le moment.</p>
             <Button onClick={() => navigate('/')} className="bg-black text-white">
               Continuer mes achats
             </Button>
@@ -113,7 +113,7 @@ export function OrdersPage() {
               >
                 <div className="flex justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-black">Commande #{o.id}</p>
+                    <p className="font-semibold text-black">Devis #{o.id}</p>
                     <p className="text-xs text-gray-500 mt-0.5">{fmtDate(o.created_at)}</p>
                     <p className="text-sm text-gray-700 mt-2 truncate">
                       {o.preview_names.join(' · ') || `${o.items_count} article(s)`}

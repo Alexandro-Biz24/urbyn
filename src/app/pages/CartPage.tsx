@@ -7,24 +7,24 @@ import { ArrowRight, Trash2, ShoppingBag, MapPin, Plus, Minus, CheckCircle, Aler
 import { useCart } from '../context/CartContext';
 import {
   MASSIF_INSTALLATION_EUR,
-  MASSIF_PER_TON_EXTRA_EUR,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
   isTotemInstallationSelected,
+  truckDedicatedLabel,
 } from '../lib/massifShipping';
 import {
-  TOTEM_ORIGIN_LABEL,
-  TOTEM_PER_KM_EUR,
-  TOTEM_TRUCK_BASE_EUR,
   TOTEM_TRUCK_CAPACITY,
-  computeTotemShipping,
+  computeTotemShippingByOrigin,
   countTotemUnits,
+  resolveTotemRoadDistanceKm,
+  totemTruckDedicatedLabel,
 } from '../lib/totemShipping';
 import {
   totemVolumeDiscountAmount,
   totemVolumeDiscountPercentLabel,
 } from '../lib/totemDiscount';
+import { maxPanelsForTotemQty } from '../lib/totemPanels';
 
 import totemCaissonBoisImg from '../../imports/totem-caisson-bois.jpg';
 
@@ -76,6 +76,7 @@ export function CartPage() {
   const [savedDeliveryAddress, setSavedDeliveryAddress] = useState<{
     street?: string; postalCode?: string; city?: string; country?: string;
   } | null>(null);
+  const [totemRoadKm, setTotemRoadKm] = useState<number | null>(null);
 
   useEffect(() => {
     const full = localStorage.getItem('deliveryAddress');
@@ -84,17 +85,116 @@ export function CartPage() {
     if (partial) setSavedDeliveryAddress(JSON.parse(partial));
   }, []);
 
+  useEffect(() => {
+    const pc = savedDeliveryAddress?.postalCode?.trim();
+    if (!pc) {
+      setTotemRoadKm(null);
+      return;
+    }
+    let cancelled = false;
+    let destCoords: { lat: number; lng: number } | null = null;
+    try {
+      const full = localStorage.getItem('deliveryAddress');
+      if (full) {
+        const addr = JSON.parse(full);
+        if (
+          addr?.postalCode === pc &&
+          addr?.coordinates?.lat != null &&
+          addr?.coordinates?.lng != null
+        ) {
+          destCoords = addr.coordinates;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    resolveTotemRoadDistanceKm({
+      postalCode: pc,
+      country: savedDeliveryAddress?.country || 'France',
+      destCoords,
+    }).then((km) => {
+      if (!cancelled) setTotemRoadKm(km);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedDeliveryAddress?.postalCode, savedDeliveryAddress?.country]);
+
   // Group items by itemType for the summary panel
   const totemItems       = items.filter(i => i.details?.itemType === 'totem');
   const panelItems       = items.filter(i => i.details?.itemType === 'panels');
   const balastItems      = items.filter(i => i.details?.itemType === 'balast');
-  const massifItems      = items.filter(i => i.type === 'massif');
+  const massifItems      = items.filter(
+    (i) =>
+      (i.type === 'massif' || i.details?.itemType === 'massif') &&
+      i.details?.itemType !== 'manille' &&
+      i.details?.itemType !== 'palette',
+  );
+  const manilleItems     = items.filter(i => i.details?.itemType === 'manille');
+  const paletteItems     = items.filter(i => i.details?.itemType === 'palette');
   const productItems     = items.filter(i => i.details?.itemType !== 'installation');
 
   const balastsForTotem = (totemId: string) =>
     balastItems.filter((b) => b.details?.forTotemId === totemId);
+  const panelsForTotem = (totemId: string) =>
+    panelItems.filter((p) => p.details?.forTotemId === totemId);
   const orphanBalastItems = balastItems.filter(
     (b) => !b.details?.forTotemId || !totemItems.some((t) => t.id === b.details?.forTotemId),
+  );
+  const orphanPanelItems = panelItems.filter(
+    (p) => !p.details?.forTotemId || !totemItems.some((t) => t.id === p.details?.forTotemId),
+  );
+
+  const renderPanelCard = (
+    item: (typeof panelItems)[number],
+    maxPanels: number | undefined,
+  ) => (
+    <div key={item.id} className="bg-white rounded-xl border border-gray-200 flex gap-4 p-5">
+      <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0">
+        <img src={itemImg('panels')} alt={item.name} className="w-full h-full object-cover" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="font-semibold text-black text-sm">{item.name}</h3>
+        {(item.details?.panelSize || item.details?.format) && (
+          <p className="text-xs text-gray-500 mt-0.5">
+            Format : {item.details?.panelSize || `${item.details?.format} × 150 cm`}
+            {maxPanels !== undefined && (
+              <span className="text-gray-400"> — max {maxPanels}</span>
+            )}
+          </p>
+        )}
+        {item.details?.forTotemName && (
+          <p className="text-xs text-gray-500 mt-0.5">Pour : {item.details.forTotemName}</p>
+        )}
+        <p className="text-xs text-gray-400 mt-0.5">
+          {item.price.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT / unité
+        </p>
+        <div className="mt-3">
+          <QuantityControl
+            value={item.quantity}
+            min={0}
+            max={maxPanels}
+            onChange={(v) => updateQuantity(item.id, v)}
+          />
+        </div>
+      </div>
+      <div className="flex flex-col justify-between items-end">
+        <button
+          onClick={() => removeItem(item.id)}
+          className="text-gray-400 hover:text-red-500 transition-colors"
+          aria-label="Supprimer"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+        <p className="font-bold text-black text-sm">
+          {(item.price * item.quantity).toLocaleString('fr-FR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}
+          € HT
+        </p>
+      </div>
+    </div>
   );
 
   const renderBalastCard = (item: (typeof balastItems)[number]) => (
@@ -156,8 +256,8 @@ export function CartPage() {
 
   const totemShipping = useMemo(
     () =>
-      computeTotemShipping(
-        countTotemUnits(totemItems),
+      computeTotemShippingByOrigin(
+        totemItems,
         savedDeliveryAddress?.postalCode,
         savedDeliveryAddress?.country || 'France',
       ),
@@ -170,8 +270,8 @@ export function CartPage() {
     totemItems.length > 0 && isTotemInstallationSelected() ? TOTEM_INSTALLATION_EUR : 0;
   const massifShipAmount = massifItems.length > 0 ? massifShipping.shippingTotal : 0;
   const totemShipAmount = totemItems.length > 0 ? totemShipping.shippingTotal : 0;
-  // Panneaux seuls (hors totems) — valeur calculée à l'étape livraison
-  const hasPanelsOnlyShip = panelItems.length > 0;
+  // Panneaux seuls (sans totems) — sinon les panneaux voyagent avec les totems
+  const hasPanelsOnlyShip = panelItems.length > 0 && totemItems.length === 0;
   const panelShipAmount = hasPanelsOnlyShip
     ? Number(localStorage.getItem('shippingCostOther') || '0')
     : 0;
@@ -239,6 +339,8 @@ export function CartPage() {
                   `${balastItems.reduce((s, i) => s + i.quantity, 0)} lest(s)`,
                 massifItems.reduce((s, i) => s + i.quantity, 0) > 0 &&
                   `${massifItems.reduce((s, i) => s + i.quantity, 0)} massif(s)`,
+                paletteItems.reduce((s, i) => s + i.quantity, 0) > 0 &&
+                  `${paletteItems.reduce((s, i) => s + i.quantity, 0)} palette(s)`,
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
@@ -331,6 +433,17 @@ export function CartPage() {
                           {renderBalastCard(b)}
                         </div>
                       ))}
+                      {panelsForTotem(item.id).map((p) => (
+                        <div key={p.id} className="pl-4 border-l-2 border-gray-300">
+                          {renderPanelCard(
+                            p,
+                            maxPanelsForTotemQty(
+                              item.quantity,
+                              item.details?.panelsPerUnit ?? p.details?.panelsPerUnit,
+                            ),
+                          )}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -343,102 +456,113 @@ export function CartPage() {
                       </h3>
                       <span className="text-xs text-blue-700">
                         {totemShipping.trucksCount} camion
-                        {totemShipping.trucksCount > 1 ? 's' : ''} · max {TOTEM_TRUCK_CAPACITY} ·{' '}
-                        {TOTEM_ORIGIN_LABEL}
+                        {totemShipping.trucksCount > 1 ? 's' : ''} · max {TOTEM_TRUCK_CAPACITY}
                       </span>
                     </div>
-                    <div className="space-y-2">
-                      {totemShipping.truckFills.map((pct, i) => {
-                        const fill = Math.round(pct);
-                        return (
-                          <div key={i} className="space-y-1">
-                            <div className="flex justify-between text-[10px] font-bold uppercase text-black">
-                              <span>
-                                Camion {i + 1}
-                                {totemShipping.trucksCount > 1
-                                  ? ` / ${totemShipping.trucksCount}`
-                                  : ''}
-                                {totemShipping.truckLoads[i] != null
-                                  ? ` · ${totemShipping.truckLoads[i]}/${TOTEM_TRUCK_CAPACITY}`
-                                  : ''}
-                              </span>
-                              <span className={fill >= 95 ? 'text-emerald-600' : 'text-gray-500'}>
-                                {fill}%
-                              </span>
-                            </div>
-                            <div className="h-2 bg-blue-50 rounded-full overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all ${
-                                  fill >= 95 ? 'bg-emerald-500' : 'bg-blue-500'
-                                }`}
-                                style={{ width: `${Math.min(fill, 100)}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                      <p className="text-[11px] text-gray-500 pt-1">
-                        {totemShipping.trucksCount} × ({TOTEM_TRUCK_BASE_EUR} € +{' '}
-                        {totemShipping.distanceKm} km × {TOTEM_PER_KM_EUR} €) ={' '}
-                        <strong className="text-black">
-                          {totemShipping.shippingTotal.toLocaleString('fr-FR', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
+                    <div className="space-y-4">
+                      {(totemShipping.groups.length > 0
+                        ? totemShipping.groups
+                        : [
+                            {
+                              groupKey: 'all',
+                              productLabels: [] as string[],
+                              truckFills: totemShipping.truckFills,
+                              truckLoads: totemShipping.truckLoads,
+                              trucksCount: totemShipping.trucksCount,
+                              shippingTotal: totemShipping.shippingTotal,
+                            },
+                          ]
+                      ).map((g) => (
+                        <div key={g.groupKey} className="space-y-2">
+                          {totemShipping.groups.length > 1 && (
+                            <p className="text-xs font-semibold text-gray-700">
+                              {totemTruckDedicatedLabel(g.productLabels)}
+                            </p>
+                          )}
+                          {g.truckFills.map((pct, i) => {
+                            const fill = Math.round(pct);
+                            return (
+                              <div key={i} className="space-y-1">
+                                <div className="flex justify-between text-[10px] font-bold uppercase text-black">
+                                  <span>
+                                    Camion {i + 1}
+                                    {g.trucksCount > 1 ? ` / ${g.trucksCount}` : ''}
+                                    {g.truckLoads[i] != null
+                                      ? ` · ${g.truckLoads[i]}/${TOTEM_TRUCK_CAPACITY}`
+                                      : ''}
+                                  </span>
+                                  <span className={fill >= 95 ? 'text-emerald-600' : 'text-gray-500'}>
+                                    {fill}%
+                                  </span>
+                                </div>
+                                <div className="h-2 bg-blue-50 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      fill >= 95 ? 'bg-emerald-500' : 'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${Math.min(fill, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
                           })}
-                          €
-                        </strong>
-                        {!savedDeliveryAddress?.postalCode && (
-                          <span className="text-amber-600"> (distance estimée — CP requis)</span>
-                        )}
-                      </p>
-                      <p className="text-[10px] text-gray-400">
-                        Séparé des camions massifs — jamais mélangés.
-                      </p>
+                          {totemShipping.groups.length > 1 && (
+                            <p className="text-[11px] text-gray-500">
+                              Livraison :{' '}
+                              <strong className="text-black">
+                                {g.shippingTotal.toLocaleString('fr-FR', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                                €
+                              </strong>
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                      {totemShipping.groups.length <= 1 && (
+                        <p className="text-[11px] text-gray-500 pt-1">
+                          Livraison :{' '}
+                          <strong className="text-black">
+                            {totemShipping.shippingTotal.toLocaleString('fr-FR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                            €
+                          </strong>
+                          {!savedDeliveryAddress?.postalCode && (
+                            <span className="text-amber-600"> (CP requis)</span>
+                          )}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Panneaux */}
-            {panelItems.length > 0 && (
+            {/* Panneaux orphelins (anciennes lignes non liées à un totem) */}
+            {orphanPanelItems.length > 0 && (
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">Panneaux</p>
                 <div className="space-y-3">
-                  {panelItems.map(item => {
-                    // Max panels = sum of totem quantities × 2 for matching format
-                    const matchingTotems = totemItems.filter(t => t.details?.format === item.details?.format);
-                    const maxPanels = matchingTotems.reduce((s, t) => s + t.quantity * 2, 0) || undefined;
-                    return (
-                      <div key={item.id} className="bg-white rounded-xl border border-gray-200 flex gap-4 p-5">
-                        <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0">
-                          <img src={itemImg('panels')} alt={item.name} className="w-full h-full object-cover" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-black text-sm">{item.name}</h3>
-                          {item.details?.format && (
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              Format : {item.details.format} × 150 cm
-                              {maxPanels && <span className="text-gray-400"> — max {maxPanels}</span>}
-                            </p>
-                          )}
-                          <p className="text-xs text-gray-400 mt-0.5">{item.price.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT / unité</p>
-                          <div className="mt-3">
-                            <QuantityControl value={item.quantity} min={1} max={maxPanels}
-                              onChange={v => updateQuantity(item.id, v)} />
-                          </div>
-                        </div>
-                        <div className="flex flex-col justify-between items-end">
-                          <button onClick={() => removeItem(item.id)}
-                            className="text-gray-400 hover:text-red-500 transition-colors" aria-label="Supprimer">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          <p className="font-bold text-black text-sm">
-                            {(item.price * item.quantity).toLocaleString('fr-FR')}€ HT
-                          </p>
-                        </div>
-                      </div>
+                  {orphanPanelItems.map((item) => {
+                    const matchingTotems = totemItems.filter(
+                      (t) =>
+                        t.details?.format === item.details?.format ||
+                        t.details?.productId === item.details?.productId,
                     );
+                    const maxPanels =
+                      matchingTotems.reduce(
+                        (s, t) =>
+                          s +
+                          maxPanelsForTotemQty(
+                            t.quantity,
+                            t.details?.panelsPerUnit ?? item.details?.panelsPerUnit,
+                          ),
+                        0,
+                      ) || undefined;
+                    return renderPanelCard(item, maxPanels);
                   })}
                 </div>
               </div>
@@ -454,8 +578,7 @@ export function CartPage() {
               </div>
             )}
 
-            {/* Massifs */}
-            {massifItems.length > 0 && (
+            {(massifItems.length > 0 || manilleItems.length > 0 || paletteItems.length > 0) && (
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">Massifs béton</p>
                 <div className="space-y-3">
@@ -492,6 +615,65 @@ export function CartPage() {
                       </div>
                     </div>
                   ))}
+                  {manilleItems.map(item => (
+                    <div key={item.id} className="bg-white rounded-xl border border-gray-200 p-5">
+                      <div className="flex gap-4">
+                        <div className="w-20 h-20 rounded-lg bg-gray-100 flex-shrink-0 border border-gray-200 flex items-center justify-center">
+                          <span className="text-2xl">🔗</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-black text-sm">{item.name}</h3>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {item.price.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT / unité
+                          </p>
+                          <p className="text-[11px] text-gray-500 mt-2">
+                            Quantité : ×{item.quantity} (max mutualisé par type)
+                          </p>
+                        </div>
+                        <div className="flex flex-col justify-between items-end">
+                          <button onClick={() => removeItem(item.id)}
+                            className="text-gray-400 hover:text-red-500 transition-colors" aria-label="Supprimer">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <p className="font-bold text-black text-sm">
+                            {(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {paletteItems.map(item => (
+                    <div key={item.id} className="bg-white rounded-xl border border-amber-200 p-5">
+                      <div className="flex gap-4">
+                        <div className="w-20 h-20 rounded-lg bg-amber-50 flex-shrink-0 border border-amber-100 flex items-center justify-center">
+                          <span className="text-2xl">📦</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-black text-sm">{item.name}</h3>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {item.price.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT / unité
+                          </p>
+                          <div className="mt-3 flex items-center gap-2">
+                            <span className="inline-flex items-center border border-amber-200 bg-amber-50 rounded-md px-3 py-1 text-sm font-medium text-amber-900 min-w-[2rem] justify-center">
+                              {item.quantity}
+                            </span>
+                            <span className="text-[11px] text-gray-500">
+                              Quantité liée aux massifs (non modifiable)
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col justify-between items-end">
+                          <button onClick={() => removeItem(item.id)}
+                            className="text-gray-400 hover:text-red-500 transition-colors" aria-label="Supprimer">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <p className="font-bold text-black text-sm">
+                            {(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 {massifShipping.groups.length > 0 && (
@@ -509,7 +691,7 @@ export function CartPage() {
                       {massifShipping.groups.map((g) => (
                         <div key={g.supplierKey} className="space-y-2">
                           <p className="text-xs font-semibold text-gray-700">
-                            {g.supplierName}
+                            {truckDedicatedLabel(g.productLabels)}
                             <span className="font-normal text-gray-500">
                               {' '}
                               · {(g.totalWeightKg / 1000).toFixed(2)} t
@@ -540,11 +722,7 @@ export function CartPage() {
                             );
                           })}
                           <p className="text-[11px] text-gray-500">
-                            {g.trucksCount} × 200 € + {g.trucksCount} × {g.distanceKm} km
-                            {g.tonnageFee > 0
-                              ? ` + ${MASSIF_PER_TON_EXTRA_EUR} €/t`
-                              : ''}{' '}
-                            ={' '}
+                            Livraison :{' '}
                             <strong className="text-black">
                               {g.shippingTotal.toLocaleString('fr-FR', {
                                 minimumFractionDigits: 2,
@@ -555,9 +733,6 @@ export function CartPage() {
                           </p>
                         </div>
                       ))}
-                      <p className="text-[10px] text-gray-400">
-                        Séparé des camions totems — jamais mélangés.
-                      </p>
                     </div>
                   </div>
                 )}
@@ -612,9 +787,17 @@ export function CartPage() {
                         <span className="flex-shrink-0">{(b.price * b.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
                       </div>
                     ))}
+                    {panelsForTotem(item.id).map((p) => (
+                      <div key={p.id} className="flex justify-between text-gray-600 pl-3">
+                        <span className="truncate pr-2">
+                          ↳ Panneaux {p.details?.panelSize ? `(${p.details.panelSize})` : ''} ×{p.quantity}
+                        </span>
+                        <span className="flex-shrink-0">{(p.price * p.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
-                {panelItems.map(item => (
+                {orphanPanelItems.map(item => (
                   <div key={item.id} className="flex justify-between text-gray-600">
                     <span className="truncate pr-2">Panneaux ×{item.quantity}</span>
                     <span className="flex-shrink-0">{(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
@@ -628,6 +811,18 @@ export function CartPage() {
                 ))}
                 {massifItems.map(item => (
                   <div key={item.id} className="flex justify-between text-gray-700">
+                    <span className="truncate pr-2">{item.name} ×{item.quantity}</span>
+                    <span className="flex-shrink-0">{(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
+                  </div>
+                ))}
+                {manilleItems.map(item => (
+                  <div key={item.id} className="flex justify-between text-gray-700">
+                    <span className="truncate pr-2">{item.name} ×{item.quantity}</span>
+                    <span className="flex-shrink-0">{(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
+                  </div>
+                ))}
+                {paletteItems.map(item => (
+                  <div key={item.id} className="flex justify-between text-amber-800 font-medium">
                     <span className="truncate pr-2">{item.name} ×{item.quantity}</span>
                     <span className="flex-shrink-0">{(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
                   </div>
@@ -660,13 +855,9 @@ export function CartPage() {
                       </span>
                     </div>
                     {totemShipAmount > 0 && (
-                      <div className="flex justify-between text-gray-400 text-xs pl-1">
-                        <span>
-                          Totems {TOTEM_ORIGIN_LABEL} · {totemShipping.trucksCount} camion
-                          {totemShipping.trucksCount > 1 ? 's' : ''} ({TOTEM_TRUCK_CAPACITY}/camion) ·{' '}
-                          {totemShipping.distanceKm} km
-                        </span>
-                        <span>
+                      <div className="flex justify-between gap-3 text-gray-400 text-xs pl-1">
+                        <span>Totems</span>
+                        <span className="shrink-0 tabular-nums">
                           {totemShipAmount.toLocaleString('fr-FR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
@@ -677,7 +868,7 @@ export function CartPage() {
                     )}
                     {massifShipAmount > 0 && (
                       <div className="flex justify-between text-gray-400 text-xs pl-1">
-                        <span>Massifs (séparé)</span>
+                        <span>Massifs</span>
                         <span>
                           {massifShipAmount.toLocaleString('fr-FR', {
                             minimumFractionDigits: 2,
@@ -687,18 +878,6 @@ export function CartPage() {
                         </span>
                       </div>
                     )}
-                  </div>
-                )}
-                {massifShipAmount > 0 && massifShipping.tonnageFeeTotal > 0 && (
-                  <div className="flex justify-between text-gray-400 text-xs">
-                    <span>dont coût exceptionnel ({MASSIF_PER_TON_EXTRA_EUR} €/t)</span>
-                    <span>
-                      {massifShipping.tonnageFeeTotal.toLocaleString('fr-FR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                      €
-                    </span>
                   </div>
                 )}
                 {totemInstallFee > 0 && (

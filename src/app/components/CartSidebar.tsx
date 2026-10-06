@@ -27,9 +27,12 @@ export function CartSidebar({ isOpen, onClose }: CartSidebarProps) {
   const lastTotemIndex = lastAddedItems.findLastIndex(item => item.details?.itemType === 'totem');
 
   return (
-    <div className={`fixed top-[var(--header-height)] right-0 h-[calc(100%-var(--header-height))] w-full md:w-96 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${
-      isOpen ? 'translate-x-0' : 'translate-x-full'
-    }`}>
+    <div
+      className={`fixed top-[var(--header-height)] right-0 h-[calc(100%-var(--header-height))] w-full max-w-full md:w-96 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${
+        isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
+      }`}
+      aria-hidden={!isOpen}
+    >
       <div className="flex flex-col h-full">
 
         {/* Header */}
