@@ -14,6 +14,8 @@ import {
   type MassifOption,
 } from '../components/MassifCalculator';
 import massifImg from 'figma:asset/massif-beton-cubique.png';
+// Photo de mise en situation, utilisée pour la bannière de la page.
+import massifInstalleImg from 'figma:asset/massif-beton-installe.jpg';
 import {
   fetchMassifLeafCatalogs,
   fetchMassifProducts,
@@ -366,8 +368,8 @@ export function MassifSelectionPage() {
           {/* Hero */}
           <div className="relative h-40 overflow-hidden rounded-xl mb-8 bg-gray-100">
             <ImageWithFallback
-              src={selectedFamilyType ? familyImage(selectedFamilyType) : massifImg}
-              alt="Massif béton"
+              src={massifInstalleImg}
+              alt="Massifs béton installés sur site"
               className="w-full h-full object-cover"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />

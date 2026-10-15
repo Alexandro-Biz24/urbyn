@@ -5,16 +5,22 @@
  * - 200 € / camion entamé
  * - 1 € / km (distance fournisseur → livraison)
  * - 3,4 € / tonne transportée (coût exceptionnel)
- * - Installation massif : 490 €
+ * - Déchargement massif : 490 € forfaitaires
+ * - Installation massif : 65 € par unité manipulée (palette ou massif seul)
  *
  * L'UI n'expose pas l'origine : on affiche les produits du panier dédiés au camion.
  */
+
+import { totalHandlingUnitsForMassifs } from './massifPalette'
 
 export const MASSIF_TRUCK_CAPACITY_KG = 24_000
 export const MASSIF_TRUCK_BASE_EUR = 200
 export const MASSIF_PER_KM_EUR = 1
 export const MASSIF_PER_TON_EXTRA_EUR = 3.4
-export const MASSIF_INSTALLATION_EUR = 490
+/** Déchargement : forfait, quel que soit le nombre de massifs. */
+export const MASSIF_DECHARGEMENT_EUR = 490
+/** Installation : par unité manipulée (une palette, ou un massif non palettisé). */
+export const MASSIF_INSTALLATION_UNIT_EUR = 65
 export const TOTEM_INSTALLATION_EUR = 1690
 export const FALLBACK_ORIGIN_ZIP = '75015'
 
@@ -41,6 +47,37 @@ function writeServicesByProduct(map: Record<string, string[]>) {
 export function isMassifInstallationSelected(): boolean {
   const map = readServicesByProduct()
   return (map['massif-beton'] ?? []).includes('installation')
+}
+
+export function isMassifDechargementSelected(): boolean {
+  const map = readServicesByProduct()
+  return (map['massif-beton'] ?? []).includes('dechargement')
+}
+
+/**
+ * Frais des services massif sélectionnés.
+ * - Déchargement : forfait dès qu'il y a au moins un massif.
+ * - Installation : 65 € par unité manipulée. Une palette compte pour une seule
+ *   unité même si elle porte plusieurs massifs ; un massif livré sans palette
+ *   compte pour un.
+ */
+export function computeMassifServiceFees(
+  lines: Array<{ quantity: number; details?: { nbMassifPerPalette?: unknown } | null }>,
+): { dechargement: number; installation: number; installationUnits: number } {
+  const normalized = lines.map((line) => ({
+    quantity: Number(line.quantity) || 0,
+    nbMassifPerPalette: Number(line.details?.nbMassifPerPalette) || 0,
+  }))
+  const hasMassif = normalized.some((l) => l.quantity > 0)
+  const installationUnits = totalHandlingUnitsForMassifs(normalized)
+
+  return {
+    dechargement: hasMassif && isMassifDechargementSelected() ? MASSIF_DECHARGEMENT_EUR : 0,
+    installation: isMassifInstallationSelected()
+      ? installationUnits * MASSIF_INSTALLATION_UNIT_EUR
+      : 0,
+    installationUnits,
+  }
 }
 
 export function isTotemInstallationSelected(): boolean {

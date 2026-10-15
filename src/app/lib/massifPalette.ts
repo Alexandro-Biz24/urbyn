@@ -51,6 +51,27 @@ export function palettesNeededForMassif(qty: number, nbMassifPerPalette: number)
   return Math.ceil(q / nb)
 }
 
+/**
+ * Unités manipulées à l'installation, pour une ligne massif.
+ * Un massif palettisé se manipule par palette (plusieurs massifs à la fois) ;
+ * un massif livré sans palette se manipule à l'unité.
+ */
+export function handlingUnitsForMassif(qty: number, nbMassifPerPalette: number): number {
+  const q = Math.max(0, Math.floor(Number(qty) || 0))
+  const nb = Number(nbMassifPerPalette) || 0
+  return nb > 0 ? palettesNeededForMassif(q, nb) : q
+}
+
+/** Total des unités manipulées, mutualisé sur plusieurs lignes massif. */
+export function totalHandlingUnitsForMassifs(
+  lines: Array<{ quantity: number; nbMassifPerPalette?: number | null }>,
+): number {
+  return lines.reduce(
+    (sum, line) => sum + handlingUnitsForMassif(line.quantity, Number(line.nbMassifPerPalette) || 0),
+    0,
+  )
+}
+
 /** Total palettes mutualisé sur plusieurs lignes massif. */
 export function totalPalettesForMassifs(
   lines: Array<{ quantity: number; nbMassifPerPalette?: number | null }>,

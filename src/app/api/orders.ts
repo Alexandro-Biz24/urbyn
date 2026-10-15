@@ -101,6 +101,7 @@ export function createClientOrder(payload: {
   items: unknown[]
   shippingCost: number
   massifInstallFee?: number
+  massifDechargementFee?: number
   totemInstallFee?: number
   massifShipping?: unknown
   totalHT?: number

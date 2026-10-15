@@ -6,7 +6,8 @@ import { Button } from '../components/ui/button';
 import { ArrowRight, Trash2, ShoppingBag, MapPin, Plus, Minus, CheckCircle, AlertCircle, ShieldCheck, Truck } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import {
-  MASSIF_INSTALLATION_EUR,
+  MASSIF_INSTALLATION_UNIT_EUR,
+  computeMassifServiceFees,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
@@ -264,8 +265,9 @@ export function CartPage() {
     [totemItems, savedDeliveryAddress?.postalCode, savedDeliveryAddress?.country],
   );
 
-  const massifInstallFee =
-    massifItems.length > 0 && isMassifInstallationSelected() ? MASSIF_INSTALLATION_EUR : 0;
+  const massifFees = computeMassifServiceFees(massifItems);
+  const massifInstallFee = massifFees.installation;
+  const massifDechargementFee = massifFees.dechargement;
   const totemInstallFee =
     totemItems.length > 0 && isTotemInstallationSelected() ? TOTEM_INSTALLATION_EUR : 0;
   const massifShipAmount = massifItems.length > 0 ? massifShipping.shippingTotal : 0;
@@ -285,10 +287,11 @@ export function CartPage() {
     localStorage.setItem('shippingCostMassif', String(massifShipAmount));
     localStorage.setItem('shippingCostTotem', String(totemShipAmount));
     localStorage.setItem('massifInstallFee', String(massifInstallFee));
+    localStorage.setItem('massifDechargementFee', String(massifDechargementFee));
     localStorage.setItem('totemInstallFee', String(totemInstallFee));
     localStorage.setItem(
       'shippingCost',
-      String(shippingCost + massifInstallFee + totemInstallFee),
+      String(shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee),
     );
     localStorage.setItem('totemShippingBreakdown', JSON.stringify(totemShipping));
   }, [
@@ -296,13 +299,14 @@ export function CartPage() {
     massifShipAmount,
     totemShipAmount,
     massifInstallFee,
+    massifDechargementFee,
     totemInstallFee,
     shippingCost,
     hasPanelsOnlyShip,
     totemShipping,
   ]);
 
-  const totalHT  = productsHT + shippingCost + massifInstallFee + totemInstallFee;
+  const totalHT  = productsHT + shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee;
   const tva      = totalHT * 0.2;
   const totalTTC = totalHT * 1.2;
 
@@ -892,9 +896,21 @@ export function CartPage() {
                     </span>
                   </div>
                 )}
+                {massifDechargementFee > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Déchargement massifs</span>
+                    <span>
+                      {massifDechargementFee.toLocaleString('fr-FR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      €
+                    </span>
+                  </div>
+                )}
                 {massifInstallFee > 0 && (
                   <div className="flex justify-between text-gray-600">
-                    <span>Installation massifs</span>
+                    <span>Installation massifs ({massifFees.installationUnits} × {MASSIF_INSTALLATION_UNIT_EUR} €)</span>
                     <span>
                       {massifInstallFee.toLocaleString('fr-FR', {
                         minimumFractionDigits: 2,

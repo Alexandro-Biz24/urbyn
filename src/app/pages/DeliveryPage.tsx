@@ -8,7 +8,8 @@ import { ArrowRight, Loader2 } from 'lucide-react';
 import { DeliveryAddressForm, DeliveryAddress } from '../components/DeliveryAddressForm';
 import { useCart } from '../context/CartContext';
 import {
-  MASSIF_INSTALLATION_EUR,
+  MASSIF_INSTALLATION_UNIT_EUR,
+  computeMassifServiceFees,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
@@ -90,8 +91,9 @@ export function DeliveryPage() {
     [items, deliveryAddress.postalCode, deliveryAddress.country],
   );
 
-  const massifInstallFee =
-    hasMassif && isMassifInstallationSelected() ? MASSIF_INSTALLATION_EUR : 0;
+  const massifFees = computeMassifServiceFees(massifItems);
+  const massifInstallFee = massifFees.installation;
+  const massifDechargementFee = massifFees.dechargement;
   const totemInstallFee =
     hasTotem && isTotemInstallationSelected() ? TOTEM_INSTALLATION_EUR : 0;
 
@@ -161,7 +163,7 @@ export function DeliveryPage() {
   const totemShipAmount = hasTotem ? totemShipping.shippingTotal : 0;
   const panelShipAmount = hasPanelsOnly ? panelShippingCost ?? 0 : 0;
   const shippingCost = massifShipAmount + totemShipAmount + panelShipAmount;
-  const installFees = massifInstallFee + totemInstallFee;
+  const installFees = massifDechargementFee + massifInstallFee + totemInstallFee;
 
   const shippingReady =
     (!hasMassif || !!deliveryAddress.postalCode) &&
@@ -174,6 +176,7 @@ export function DeliveryPage() {
     localStorage.setItem('shippingCostTotem', String(totemShipAmount));
     localStorage.setItem('shippingCostOther', String(panelShipAmount));
     localStorage.setItem('massifInstallFee', String(massifInstallFee));
+    localStorage.setItem('massifDechargementFee', String(massifDechargementFee));
     localStorage.setItem('totemInstallFee', String(totemInstallFee));
     localStorage.setItem('shippingCost', String(shippingCost + installFees));
     localStorage.setItem(
@@ -200,6 +203,7 @@ export function DeliveryPage() {
     massifShipping,
     totemShipping,
     massifInstallFee,
+    massifDechargementFee,
     totemInstallFee,
     installFees,
     hasMassif,
@@ -216,6 +220,7 @@ export function DeliveryPage() {
     localStorage.setItem('shippingCostTotem', String(totemShipAmount));
     localStorage.setItem('shippingCostOther', String(panelShipAmount));
     localStorage.setItem('massifInstallFee', String(massifInstallFee));
+    localStorage.setItem('massifDechargementFee', String(massifDechargementFee));
     localStorage.setItem('totemInstallFee', String(totemInstallFee));
     localStorage.setItem('shippingCost', String(shippingCost + installFees));
     navigate('/chiffrage-final');
@@ -350,9 +355,24 @@ export function DeliveryPage() {
                     </div>
                   )}
 
+                  {massifDechargementFee > 0 && (
+                    <div className="flex justify-between text-sm pb-4 border-b border-gray-200">
+                      <span className="text-black">Déchargement massifs</span>
+                      <span className="font-bold text-black">
+                        {massifDechargementFee.toLocaleString('fr-FR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                        €
+                      </span>
+                    </div>
+                  )}
+
                   {massifInstallFee > 0 && (
                     <div className="flex justify-between text-sm pb-4 border-b border-gray-200">
-                      <span className="text-black">Installation massifs</span>
+                      <span className="text-black">
+                        Installation massifs ({massifFees.installationUnits} × {MASSIF_INSTALLATION_UNIT_EUR} €)
+                      </span>
                       <span className="font-bold text-black">
                         {massifInstallFee.toLocaleString('fr-FR', {
                           minimumFractionDigits: 2,
@@ -363,7 +383,7 @@ export function DeliveryPage() {
                     </div>
                   )}
 
-                  {!massifInstallFee && !totemInstallFee && (
+                  {!massifDechargementFee && !massifInstallFee && !totemInstallFee && (
                     <div className="border-b border-gray-200 pb-4" />
                   )}
                   {totemInstallFee > 0 && !massifInstallFee && (

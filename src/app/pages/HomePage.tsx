@@ -73,7 +73,8 @@ export function HomePage() {
               <h3 className="font-bold text-lg mb-2 text-black">Habillage Thermique</h3>
               <p className="text-sm text-black mb-4">Des solutions pour protéger vos bâtiments de la chaleur et optimiser leur performance énergétique</p>
               <ul className="text-sm text-black space-y-2">
-                <li>• Toiles de protection pour façades et patios — performances énergétiques spectaculaires</li>
+                <li>• Toiles de protection pour façades — performances énergétiques spectaculaires</li>
+                <li>• Toiles de protection pour patios — performances énergétiques spectaculaires</li>
                 <li>• Films solaires pour vitrages — performance énergétique et luminosité préservée</li>
               </ul>
               <button

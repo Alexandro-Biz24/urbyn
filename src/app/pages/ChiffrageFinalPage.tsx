@@ -11,7 +11,8 @@ import {
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import {
-  MASSIF_INSTALLATION_EUR,
+  MASSIF_INSTALLATION_UNIT_EUR,
+  computeMassifServiceFees,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
@@ -94,6 +95,7 @@ const SERVICE_LABELS: Record<string, string> = {
   location: 'Location',
   transport: 'Transport',
   enlevement: 'Enlèvement',
+  dechargement: 'Déchargement',
   installation: 'Installation',
   'note-calcul': 'Note de calcul',
   'conception-graphique': 'Conception graphique',
@@ -270,7 +272,9 @@ export function ChiffrageFinalPage() {
     [massifItems, deliveryAddress?.postalCode, deliveryAddress?.country],
   );
 
-  const massifInstallFee = hasMassif && isMassifInstallationSelected() ? MASSIF_INSTALLATION_EUR : 0;
+  const massifFees = computeMassifServiceFees(massifItems);
+  const massifInstallFee = massifFees.installation;
+  const massifDechargementFee = massifFees.dechargement;
   const totemQty = countTotemUnits(items);
   const hasTotem = totemQty > 0;
   const totemInstallFee = hasTotem && isTotemInstallationSelected() ? TOTEM_INSTALLATION_EUR : 0;
@@ -298,7 +302,7 @@ export function ChiffrageFinalPage() {
     if (!hasPanelsOnly) {
       localStorage.setItem('shippingCostOther', '0');
     }
-    localStorage.setItem('shippingCost', String(shippingCost + massifInstallFee + totemInstallFee));
+    localStorage.setItem('shippingCost', String(shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee));
     localStorage.setItem('totemInstallFee', String(totemInstallFee));
     localStorage.setItem('shippingCostMassif', String(massifShipAmount));
     localStorage.setItem('shippingCostTotem', String(totemShipAmount));
@@ -335,7 +339,7 @@ export function ChiffrageFinalPage() {
     shippingByType[t] = panelAndOtherHT > 0 ? (typeTotal / panelAndOtherHT) * restShip : 0;
   });
 
-  const totalHT = totalProductsHT - totemDiscount + shippingCost + massifInstallFee + totemInstallFee;
+  const totalHT = totalProductsHT - totemDiscount + shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee;
   const totalTTC = totalHT * 1.2;
 
   const activePartners: Partner[] = [];
@@ -383,6 +387,7 @@ export function ChiffrageFinalPage() {
       items,
       shippingCost,
       massifInstallFee,
+      massifDechargementFee,
       totemInstallFee,
       massifShipping: massifShipping.groups,
       totalHT,
@@ -411,6 +416,7 @@ export function ChiffrageFinalPage() {
         items,
         shippingCost,
         massifInstallFee,
+        massifDechargementFee,
         totemInstallFee,
         massifShipping: massifShipping.groups,
         totalHT,
@@ -541,9 +547,14 @@ export function ChiffrageFinalPage() {
                             </span>
                           ))}
                         </div>
+                        {type === 'massif' && svc.includes('dechargement') && (
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Déchargement massifs : {fmt(massifDechargementFee)} € HT
+                          </p>
+                        )}
                         {type === 'massif' && svc.includes('installation') && (
                           <p className="text-xs text-muted-foreground mt-2">
-                            Installation massifs : {fmt(MASSIF_INSTALLATION_EUR)} € HT
+                            Installation massifs : {massifFees.installationUnits} × {MASSIF_INSTALLATION_UNIT_EUR} € = {fmt(massifInstallFee)} € HT
                           </p>
                         )}
                       </div>
@@ -782,9 +793,15 @@ export function ChiffrageFinalPage() {
                     <span className="font-medium text-foreground">{fmt(totemInstallFee)} €</span>
                   </div>
                 )}
+                {massifDechargementFee > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Déchargement massifs</span>
+                    <span className="font-medium text-foreground">{fmt(massifDechargementFee)} €</span>
+                  </div>
+                )}
                 {massifInstallFee > 0 && (
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Installation massifs</span>
+                    <span>Installation massifs ({massifFees.installationUnits} × {MASSIF_INSTALLATION_UNIT_EUR} €)</span>
                     <span className="font-medium text-foreground">{fmt(massifInstallFee)} €</span>
                   </div>
                 )}

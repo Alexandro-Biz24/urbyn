@@ -98,8 +98,8 @@ export function MentionsLegalesPage() {
               et structures extérieures ;
             </li>
             <li>
-              <strong>Habillage Thermique</strong> : toiles de protection pour façades et patios,
-              films solaires pour vitrages.
+              <strong>Habillage Thermique</strong> : toiles de protection pour façades, toiles de
+              protection pour patios, films solaires pour vitrages.
             </li>
           </ul>
           <p className="mt-4">

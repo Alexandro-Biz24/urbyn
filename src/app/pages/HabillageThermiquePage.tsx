@@ -1,13 +1,18 @@
 import { useNavigate } from 'react-router-dom';
 import { SEOMeta, breadcrumbSchema } from '../components/SEOMeta';
 import { Button } from '../components/ui/button';
-import { Sun, PanelTop, Sparkles, ArrowLeft, Mail } from 'lucide-react';
+import { Sun, PanelTop, Umbrella, Sparkles, ArrowLeft, Mail } from 'lucide-react';
 
 const EXPERTISES = [
   {
     icon: PanelTop,
-    title: 'Toiles de protection pour façades et patios',
-    description: 'Des toiles conçues pour réduire la chaleur reçue par le bâti et offrir des performances énergétiques spectaculaires, sur façades comme sur patios.',
+    title: 'Toiles de protection pour façades',
+    description: 'Des toiles conçues pour réduire la chaleur reçue par le bâti et offrir des performances énergétiques spectaculaires.',
+  },
+  {
+    icon: Umbrella,
+    title: 'Toiles de protection pour patios',
+    description: 'Des toiles conçues pour réduire la chaleur reçue par les patios et offrir des performances énergétiques spectaculaires.',
   },
   {
     icon: Sparkles,
@@ -23,8 +28,8 @@ export function HabillageThermiquePage() {
     <>
       <SEOMeta
         title="Habillage Thermique — Protection solaire & performance énergétique"
-        description="Atelier Urbanize propose des solutions d'habillage thermique contre les îlots de chaleur urbains : toiles de protection pour façades et patios, films solaires pour vitrages, alliant performance énergétique et confort."
-        keywords="habillage thermique, protection solaire façade, film solaire vitrage, îlot de chaleur urbain, performance énergétique, toile ombrage façade, Atelier Urbanize"
+        description="Atelier Urbanize propose des solutions d'habillage thermique contre les îlots de chaleur urbains : toiles de protection pour façades, toiles de protection pour patios, films solaires pour vitrages, alliant performance énergétique et confort."
+        keywords="habillage thermique, protection solaire façade, protection solaire patio, toile patio, film solaire vitrage, îlot de chaleur urbain, performance énergétique, toile ombrage façade, Atelier Urbanize"
         url="/habillage-thermique"
         jsonLd={breadcrumbSchema([{ name: 'Accueil', url: '/' }, { name: 'Habillage Thermique', url: '/habillage-thermique' }])}
       />
