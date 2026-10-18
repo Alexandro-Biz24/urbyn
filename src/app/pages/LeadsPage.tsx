@@ -179,6 +179,18 @@ export function LeadsPage() {
                   </div>
                 </div>
               ))}
+              {selected.supplier_shipping_ht > 0 ? (
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Votre livraison</span>
+                  <span>{fmtEuro(selected.supplier_shipping_ht)}</span>
+                </div>
+              ) : null}
+              {selected.supplier_services_ht > 0 ? (
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Déchargement et installation</span>
+                  <span>{fmtEuro(selected.supplier_services_ht)}</span>
+                </div>
+              ) : null}
               <div className="flex justify-between pt-2 border-t border-gray-200 font-bold text-base">
                 <span>Votre CA sur ce devis (HT)</span>
                 <span>{fmtEuro(selected.supplier_total_ht)}</span>

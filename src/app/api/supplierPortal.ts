@@ -166,6 +166,113 @@ export function updateProductAttribute(
   })
 }
 
+export interface SupplierOffer {
+  product_id: number
+  product_name: string
+  client_sku: string
+  catalog_label: string
+  price: number
+  currency: string
+  delai_jours: number
+}
+
+export interface SupplierOfferGroup {
+  catalog_label: string
+  catalog_ids: number[]
+  catalog_paths: string[]
+  address_id: number | null
+  offers: SupplierOffer[]
+}
+
+export interface CatalogProductHit {
+  product_id: number
+  product_name: string
+  client_sku: string
+  already_offered: boolean
+}
+
+export interface CatalogSearchGroup {
+  catalog_id: number
+  catalog_label: string
+  products: CatalogProductHit[]
+}
+
+export function fetchMyOffers(
+  session: PortalSessionPayload,
+): Promise<{ groups: SupplierOfferGroup[] }> {
+  return apiFetch(`/api/v1/supplier-portal/offers?${qs(session)}`)
+}
+
+export function searchCatalogProducts(
+  session: PortalSessionPayload,
+  query: string,
+): Promise<CatalogSearchGroup[]> {
+  return apiFetch(
+    `/api/v1/supplier-portal/offers/catalog-products?${qs(session, { q: query.trim() })}`,
+  )
+}
+
+export function fetchCatalogOfferProducts(
+  session: PortalSessionPayload,
+  catalogId: number,
+): Promise<CatalogProductHit[]> {
+  return apiFetch(
+    `/api/v1/supplier-portal/offers/catalogs/${catalogId}/products?${qs(session)}`,
+  )
+}
+
+export function assignCatalogAddress(
+  session: PortalSessionPayload,
+  addressId: number,
+  catalogIds: number[],
+): Promise<void> {
+  return apiFetch('/api/v1/supplier-portal/offers/catalog-address', {
+    method: 'POST',
+    body: JSON.stringify({
+      session,
+      address_id: addressId,
+      catalog_ids: catalogIds,
+    }),
+  })
+}
+
+export function saveSupplierSection(
+  session: PortalSessionPayload,
+  offers: { product_id: number; price: number; delai_jours: number }[],
+  addresses: { address_id: number; catalog_ids: number[] }[],
+): Promise<{ groups: SupplierOfferGroup[] }> {
+  return apiFetch('/api/v1/supplier-portal/offers/section', {
+    method: 'POST',
+    body: JSON.stringify({ session, offers, addresses }),
+  })
+}
+
+export function withdrawSupplierOffer(
+  session: PortalSessionPayload,
+  productId: number,
+): Promise<{ groups: SupplierOfferGroup[] }> {
+  return apiFetch(`/api/v1/supplier-portal/offers/${productId}?${qs(session)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function saveSupplierOffer(
+  session: PortalSessionPayload,
+  productId: number,
+  price: number,
+  delaiJours: number,
+): Promise<SupplierOffer> {
+  return apiFetch('/api/v1/supplier-portal/offers', {
+    method: 'POST',
+    body: JSON.stringify({
+      session,
+      product_id: productId,
+      price,
+      delai_jours: delaiJours,
+    }),
+  })
+}
+
 export function deleteProductAttribute(
   session: PortalSessionPayload,
   productId: number,

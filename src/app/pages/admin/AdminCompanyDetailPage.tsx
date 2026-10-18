@@ -63,6 +63,7 @@ export function AdminCompanyDetailPage() {
                 { label: 'Branche', value: detail.branche },
                 { label: 'Site web', value: detail.website },
                 { label: 'TVA (%)', value: detail.vat_rate != null ? String(detail.vat_rate) : null },
+                { label: 'Abonné', value: detail.abonne ? 'Oui' : 'Non' },
                 { label: 'Vérifiée', value: detail.is_verified ? 'Oui' : 'Non' },
                 { label: 'CGV acceptées', value: detail.cgv_accepted ? 'Oui' : 'Non' },
                 { label: 'Produits', value: String(detail.product_count) },

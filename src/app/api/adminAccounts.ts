@@ -43,6 +43,7 @@ export interface AdminCompanyListItem {
   user_count: number
   product_count: number
   is_verified: boolean
+  abonne: boolean
   created_at: string
 }
 

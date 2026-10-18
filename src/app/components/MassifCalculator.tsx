@@ -34,6 +34,9 @@ import {
   totalPalettesForMassifs,
 } from '../lib/massifPalette';
 import { fetchMassifManilles, fetchMassifPalette, resolveMassifOfferFromSession, type MassifManille, type MassifPalette } from '../api/massif';
+import { estimateProduct, type EstimateResult, type PricingOffer } from '../api/pricing';
+import { cartLinesFromItems, massifTransportSelected, pricingContextFromSession } from '../lib/orderPricing';
+import { EstimateOfferPopup } from './EstimateOfferPopup';
 import massifImg from 'figma:asset/massif-beton-cubique.png';
 import massifLegoImg from 'figma:asset/massif-beton-lego.png';
 
@@ -287,6 +290,11 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
   const [deliveryInfoValidated, setDeliveryInfoValidated] = useState(false);
   const [deliveryFormOpen, setDeliveryFormOpen] = useState(false);
   const [postalCodeError, setPostalCodeError] = useState(false);
+  const [estimateOpen, setEstimateOpen] = useState(false);
+  const [estimateLoading, setEstimateLoading] = useState(false);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  const [estimateResult, setEstimateResult] = useState<EstimateResult | null>(null);
+  const transportOn = massifTransportSelected();
   const [manilles, setManilles] = useState<MassifManille[]>([]);
   /** Types manille explicitement voulus sur cet écran (clé = manilleType normalisé). */
   const [wantedManilleTypes, setWantedManilleTypes] = useState<Record<string, boolean>>({});
@@ -683,7 +691,12 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
   const grandTotal =
     productsAndManilleTotal + (deliveryEstimate != null ? deliveryEstimate : 0);
 
-  const handleAddToCart = () => {
+  const handleAddToCart = (supplier?: {
+    tva: string
+    name: string
+    unitPrice: number
+    addedTotal: number
+  }) => {
     if (!completedItems.length) return;
 
     const existingAddressRaw = localStorage.getItem('deliveryAddress');
@@ -704,7 +717,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
     const cartPayload = completedItems.map((it) => {
       const manilleNeed = manilleNeedOfItem(it);
       if (it.fromApi && it.product) {
-        const unit = itemUnitPrice(it);
+        const unit = supplier?.unitPrice ?? itemUnitPrice(it);
         const nbMassifPerPalette = nbMassifPerPaletteOfItem(it);
         return {
           id: `massif-api-${it.product.product_id}`,
@@ -728,8 +741,11 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
             manilleNombre: manilleNeed?.qty ?? null,
             dimensions: it.product.dimensions,
             currency: it.product.currency,
-            companyName: it.product.company_name ?? null,
-            companyTva: it.product.company_tva ?? null,
+            companyName: supplier?.name ?? it.product.company_name ?? null,
+            companyTva: supplier?.tva ?? it.product.company_tva ?? null,
+            supplierName: supplier?.name ?? null,
+            supplierTva: supplier?.tva ?? null,
+            addedTotal: supplier?.addedTotal ?? null,
             companyZip: it.product.company_zip ?? null,
             companyCity: it.product.company_city ?? null,
             companyCountry: it.product.company_country ?? null,
@@ -786,8 +802,10 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
         description: m.description,
         weight: m.poids ?? 0,
         totalWeight: (m.poids ?? 0) * qty,
-        companyName: m.company_name,
-        companyTva: m.company_tva,
+        companyName: supplier?.name ?? m.company_name,
+        companyTva: supplier?.tva ?? m.company_tva,
+        supplierName: supplier?.name ?? null,
+        supplierTva: supplier?.tva ?? null,
         currency: m.currency,
         deliveryPostalCode,
         deliveryCountry,
@@ -815,8 +833,10 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                 description: paletteProduct.description,
                 weight: paletteProduct.poids ?? 0,
                 totalWeight: (paletteProduct.poids ?? 0) * paletteQty,
-                companyName: paletteProduct.company_name,
-                companyTva: paletteProduct.company_tva,
+                companyName: supplier?.name ?? paletteProduct.company_name,
+                companyTva: supplier?.tva ?? paletteProduct.company_tva,
+                supplierName: supplier?.name ?? null,
+                supplierTva: supplier?.tva ?? null,
                 currency: paletteProduct.currency,
                 deliveryPostalCode,
                 deliveryCountry,
@@ -866,7 +886,49 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
 
     // Évite de recharger la même sélection (double-comptage) au retour
     sessionStorage.removeItem('massifConfig');
-    navigate('/panier');
+  };
+
+  const handleEstimate = async () => {
+    const target = primaryApiItem;
+    if (!target?.product) {
+      setEstimateError('Ce massif n’est pas relié au catalogue.');
+      setEstimateResult(null);
+      setEstimateOpen(true);
+      return;
+    }
+    if (transportOn && !validatePostalCode(deliveryPostalCode, deliveryCountry)) {
+      setPostalCodeError(true);
+      setDeliveryFormOpen(true);
+      return;
+    }
+    setEstimateLoading(true);
+    setEstimateError(null);
+    setEstimateResult(null);
+    setEstimateOpen(true);
+    try {
+      const result = await estimateProduct({
+        product_id: target.product.product_id,
+        quantity: target.quantity,
+        cart: cartLinesFromItems(cartItems),
+        context: pricingContextFromSession(deliveryPostalCode, '', deliveryCountry),
+      });
+      setEstimateResult(result);
+    } catch (err) {
+      setEstimateError(err instanceof Error ? err.message : 'Estimation impossible.');
+    } finally {
+      setEstimateLoading(false);
+    }
+  };
+
+  const handlePickOffer = (offer: PricingOffer) => {
+    setEstimateOpen(false);
+    handleAddToCart({
+      tva: offer.supplier_tva,
+      name: offer.supplier_name,
+      unitPrice: offer.unit_price,
+      addedTotal: offer.added_total,
+    });
+    setItems((prev) => prev.map((it) => ({ ...it, quantity: 1 })));
   };
 
   return (
@@ -962,15 +1024,6 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                         <span className="text-black font-semibold text-right">{attr.value}</span>
                       </div>
                     ))}
-                    <div className="flex justify-between pt-1 gap-4">
-                      <span className="text-gray-600 font-medium">Prix unitaire HT</span>
-                      <span className="text-black font-bold text-right text-base">
-                        {formatEuro(
-                          primaryApiItem.product.price,
-                          primaryApiItem.product.currency || 'EUR',
-                        )}
-                      </span>
-                    </div>
                   </div>
                 </>
               ) : (
@@ -1094,10 +1147,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
 
                             <div className="bg-white border border-gray-200 rounded-lg p-3 text-sm space-y-1">
                               <p className="font-bold text-black">{item.product.product_name}</p>
-                              <p className="text-xs text-gray-500">
-                                {item.product.poids} kg ·{' '}
-                                {formatEuro(item.product.price, currency)} / unité
-                              </p>
+                              <p className="text-xs text-gray-500">{item.product.poids} kg</p>
                               {item.catalogName ? (
                                 <p className="text-xs text-gray-400">{item.catalogName}</p>
                               ) : null}
@@ -1143,17 +1193,9 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                                     +
                                   </button>
                                 </div>
-                                <div className="text-sm text-gray-600 leading-tight">
-                                  <p>
-                                    {item.quantity} × {formatEuro(price, currency)}
-                                  </p>
-                                  <p className="font-bold text-black">
-                                    = {formatEuro(lineTotal, currency)}
-                                  </p>
-                                  <p className="text-xs text-gray-500 mt-0.5">
-                                    {(weight * item.quantity / 1000).toFixed(2)} t
-                                  </p>
-                                </div>
+                                <p className="text-xs text-gray-500">
+                                  {(weight * item.quantity / 1000).toFixed(2)} t
+                                </p>
                               </div>
                             </div>
 
@@ -1210,13 +1252,8 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                                               ? ` → max mutualisé : ${neededQty}`
                                               : ''}
                                           </span>
-                                          <span className="block text-sm font-bold text-black mt-1">
-                                            {formatEuro(manille.price * neededQty, manille.currency)}{' '}
-                                            HT
-                                            <span className="font-normal text-gray-500">
-                                              {' '}
-                                              · {neededQty} unité{neededQty > 1 ? 's' : ''}
-                                            </span>
+                                          <span className="block text-xs text-gray-500 mt-1">
+                                            {neededQty} unité{neededQty > 1 ? 's' : ''}
                                           </span>
                                           {inCartAlready ? (
                                             <span className="block text-[11px] text-emerald-700 mt-1">
@@ -1248,9 +1285,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                                     Palette ×{need} (obligatoire)
                                   </p>
                                   <p className="text-gray-500">
-                                    {nb} massif{nb > 1 ? 's' : ''} / palette ·{' '}
-                                    {formatEuro(paletteProduct.price * need, paletteProduct.currency)}{' '}
-                                    HT
+                                    {nb} massif{nb > 1 ? 's' : ''} / palette
                                   </p>
                                 </div>
                               );
@@ -1584,12 +1619,6 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                               </div>
                             );
                           })}
-                          {deliveryInfoValidated && (
-                            <p className="text-[11px] text-gray-500">
-                              Livraison :{' '}
-                              <strong className="text-black">{formatEuro(group.shippingTotal)}</strong>
-                            </p>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -1605,15 +1634,12 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                     )}
                     <p className="text-xs text-gray-500 mt-2">
                       Poids total : {(shippingBySupplier.totalWeightKg / 1000).toFixed(2)} t
-                      {deliveryEstimate != null && (
-                        <> · Livraison : {formatEuro(deliveryEstimate)}</>
-                      )}
                     </p>
                   </CardContent>
                 </Card>
               )}
 
-              {/* Livraison */}
+              {transportOn ? (
               <Card className="border border-gray-300 bg-gray-50">
                 <CardContent className="p-4">
                   <div className="space-y-3">
@@ -1688,96 +1714,36 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                   </div>
                 </CardContent>
               </Card>
+              ) : null}
 
-              {!deliveryInfoValidated && (
+              {transportOn && !deliveryInfoValidated && (
                 <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-center">
                   Veuillez renseigner votre code postal et votre pays dans la section{' '}
-                  <strong>Localisation de livraison</strong> avant d&apos;ajouter au panier.
+                  <strong>Localisation de livraison</strong> avant d&apos;estimer.
                 </p>
               )}
 
-              {/* Récap prix + livraison (estimation) */}
-              {completedItems.length > 0 && (
-                <Card className="border-2 border-black bg-white">
-                  <CardContent className="p-4 space-y-2 text-sm">
-                    <div className="flex justify-between gap-3">
-                      <span className="text-gray-600">
-                        Produits sélection ({completedItems.reduce((n, it) => n + it.quantity, 0)}{' '}
-                        unit.)
-                      </span>
-                      <span className="font-semibold text-black">{formatEuro(totalPrice)}</span>
-                    </div>
-                    {selectedManilles.length > 0 ? (
-                      <div className="space-y-1">
-                        {selectedManilles.map(({ manille: m, qty }) => {
-                          const key = normalizeManilleType(m.manille_type);
-                          const already = cartManilleQtyByType.get(key) ?? 0;
-                          const delta = Math.max(0, qty - already);
-                          return (
-                            <div
-                              key={m.product_id}
-                              className="flex justify-between gap-3 text-xs"
-                            >
-                              <span className="text-gray-600">
-                                Manille {m.manille_type} ×{qty}
-                                {already > 0 ? ` (déjà ${already} au panier)` : ''}
-                              </span>
-                              <span className="font-semibold text-black">
-                                {delta > 0 ? formatEuro(m.price * delta) : '—'}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                    {paletteProduct && selectionPaletteQty > 0 ? (
-                      <div className="flex justify-between gap-3 text-xs">
-                        <span className="text-gray-600">
-                          Palette ×{selectionPaletteQty} (obligatoire)
-                        </span>
-                        <span className="font-semibold text-black">
-                          {formatEuro(selectionPaletteTotal, paletteProduct.currency)}
-                        </span>
-                      </div>
-                    ) : null}
-                    <div className="flex justify-between gap-3">
-                      <span className="text-gray-600 flex items-center gap-1.5">
-                        <Truck className="w-3.5 h-3.5" />
-                        Livraison
-                        {cartMassifWeight > 0 ? ' (panier + sélection)' : ''}
-                      </span>
-                      <span className="font-semibold text-black">
-                        {deliveryEstimate != null ? formatEuro(deliveryEstimate) : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between gap-3 pt-2 border-t border-gray-200 text-base">
-                      <span className="font-bold text-black">
-                        {cartMassifWeight > 0
-                          ? 'Total sélection + livraison HT'
-                          : 'Total estimé HT'}
-                      </span>
-                      <span className="font-black text-black">{formatEuro(grandTotal)}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Bouton Ajouter au panier */}
               <Button
-                onClick={handleAddToCart}
-                disabled={completedItems.length === 0 || !deliveryInfoValidated}
+                onClick={handleEstimate}
+                disabled={completedItems.length === 0 || (transportOn && !deliveryInfoValidated) || estimateLoading}
                 className="w-full bg-black hover:bg-gray-800 text-white py-6 text-lg disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                Ajouter au panier
-                {completedItems.length > 0
-                  ? ` · ${formatEuro(deliveryEstimate != null ? grandTotal : productsAndManilleTotal)}`
-                  : ''}
+                Estimer ma commande
               </Button>
             </div>
           </div>
         </div>
       </div>
+      <EstimateOfferPopup
+        open={estimateOpen}
+        loading={estimateLoading}
+        error={estimateError}
+        result={estimateResult}
+        showDelivery={transportOn}
+        onClose={() => setEstimateOpen(false)}
+        onPick={handlePickOffer}
+      />
     </div>
   );
 }

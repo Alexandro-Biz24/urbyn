@@ -6,7 +6,10 @@ import {
   fetchAdminCatalogProductAttributes,
   fetchAdminCatalogProducts,
   fetchAdminCatalogTree,
+  downloadAdminCsv,
   importAdminCatalogCsv,
+  importAdminSubscriptionsCsv,
+  importAdminSupplierOffersCsv,
   setAdminCatalogAttributeMandatory,
   updateAdminCatalog,
   type AdminCatalogNode,
@@ -14,12 +17,11 @@ import {
   type CatalogCsvImportMode,
   type CatalogCsvImportResult,
   type CatalogProductAttribute,
+  type SubscriptionsCsvImportResult,
+  type SupplierOffersCsvImportResult,
 } from '../../api/admin'
-import {
-  fetchAdminCompanies,
-  type AdminCompanyListItem,
-} from '../../api/adminAccounts'
 import { AdminTopBar } from './AdminDashboardPage'
+import { CsvDropzone, CsvErrorList, CsvModeField } from './AdminCsvImportPanel'
 import './Admin.css'
 
 type PanelMode = 'empty' | 'edit' | 'create-root' | 'create-child'
@@ -144,15 +146,21 @@ export function AdminCatalogPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  // Import CSV
   const [importOpen, setImportOpen] = useState(false)
-  const [importMode, setImportMode] = useState<CatalogCsvImportMode>('additive')
-  const [importCompanyTva, setImportCompanyTva] = useState('')
-  const [companies, setCompanies] = useState<AdminCompanyListItem[]>([])
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<CatalogCsvImportResult | null>(null)
+  const [adminMode, setAdminMode] = useState<CatalogCsvImportMode>('additive')
+  const [adminFile, setAdminFile] = useState<File | null>(null)
+  const [adminImporting, setAdminImporting] = useState(false)
+  const [adminResult, setAdminResult] = useState<CatalogCsvImportResult | null>(null)
+  const [offersMode, setOffersMode] = useState<CatalogCsvImportMode>('additive')
+  const [offersFile, setOffersFile] = useState<File | null>(null)
+  const [offersImporting, setOffersImporting] = useState(false)
+  const [offersResult, setOffersResult] = useState<SupplierOffersCsvImportResult | null>(null)
+  const [subsMode, setSubsMode] = useState<CatalogCsvImportMode>('additive')
+  const [subsFile, setSubsFile] = useState<File | null>(null)
+  const [subsImporting, setSubsImporting] = useState(false)
+  const [subsResult, setSubsResult] = useState<SubscriptionsCsvImportResult | null>(null)
+  const [offersExporting, setOffersExporting] = useState(false)
+  const [subsExporting, setSubsExporting] = useState(false)
 
   const q = search.trim().toLowerCase()
   const displayTree = useMemo(() => filterTree(roots, q), [roots, q])
@@ -168,25 +176,6 @@ export function AdminCatalogPage() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
   }, [reloadTree])
-
-  useEffect(() => {
-    if (!importOpen) return
-    fetchAdminCompanies()
-      .then((data) => {
-        const all = [...data.suppliers, ...data.clients].sort((a, b) =>
-          a.company_name.localeCompare(b.company_name, 'fr'),
-        )
-        setCompanies(all)
-        setImportCompanyTva((prev) => {
-          if (prev) return prev
-          const urbanize = all.find((c) =>
-            /urbanize/i.test(c.company_name),
-          )
-          return urbanize?.tva_intra_com || ''
-        })
-      })
-      .catch(() => setCompanies([]))
-  }, [importOpen])
 
   useEffect(() => {
     if (!q) return
@@ -357,42 +346,98 @@ export function AdminCatalogPage() {
     }
   }
 
-  function acceptCsvFile(file: File | null | undefined) {
-    if (!file) return
-    if (!file.name.toLowerCase().endsWith('.csv') && file.type !== 'text/csv') {
-      setError('Veuillez déposer un fichier .csv')
-      return
-    }
-    setImportFile(file)
-    setImportResult(null)
-    setError(null)
-  }
-
-  async function handleImport() {
-    if (!importFile) {
-      setError('Choisissez un fichier CSV.')
-      return
-    }
-    setImporting(true)
+  async function handleAdminImport() {
+    if (!adminFile) return
+    setAdminImporting(true)
     setError(null)
     setSuccess(null)
-    setImportResult(null)
+    setAdminResult(null)
     try {
-      const result = await importAdminCatalogCsv({
-        file: importFile,
-        mode: importMode,
-        companyTva: importCompanyTva,
-      })
-      setImportResult(result)
+      const result = await importAdminCatalogCsv({ file: adminFile, mode: adminMode })
+      setAdminResult(result)
       setSuccess(
-        `Import terminé : ${result.products_created} créés, ${result.products_updated} mis à jour, ${result.catalogs_created} catalogues créés.`,
+        `CSV_ADMIN : ${result.products_created} créés, ${result.products_updated} mis à jour, ${result.offers_written ?? 0} offres URBANIZE.`,
       )
       await reloadTree()
       if (selectedId) await loadDetail(selectedId)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erreur import')
+      setError(e instanceof Error ? e.message : 'Erreur import CSV_ADMIN')
     } finally {
-      setImporting(false)
+      setAdminImporting(false)
+    }
+  }
+
+  async function handleOffersImport() {
+    if (!offersFile) return
+    setOffersImporting(true)
+    setError(null)
+    setSuccess(null)
+    setOffersResult(null)
+    try {
+      const result = await importAdminSupplierOffersCsv({ file: offersFile, mode: offersMode })
+      setOffersResult(result)
+      if (!result.applied) {
+        setError(
+          `CSV_FOURNISSEUR bloqué : ${result.errors.length} erreur(s). Rien n'a été écrit.`,
+        )
+        return
+      }
+      setSuccess(
+        `CSV_FOURNISSEUR : ${result.offers_written} offres écrites, ${result.offers_unchanged} inchangées.`,
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur import CSV_FOURNISSEUR')
+    } finally {
+      setOffersImporting(false)
+    }
+  }
+
+  async function handleSubsImport() {
+    if (!subsFile) return
+    setSubsImporting(true)
+    setError(null)
+    setSuccess(null)
+    setSubsResult(null)
+    try {
+      const result = await importAdminSubscriptionsCsv({ file: subsFile, mode: subsMode })
+      setSubsResult(result)
+      if (!result.applied) {
+        setError(
+          `CSV_ABONNEMENT bloqué : ${result.errors.length} erreur(s). Rien n'a été écrit.`,
+        )
+        return
+      }
+      setSuccess(
+        `CSV_ABONNEMENT : ${result.subscriptions_created} créés, ${result.subscriptions_updated} mis à jour.`,
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur import CSV_ABONNEMENT')
+    } finally {
+      setSubsImporting(false)
+    }
+  }
+
+  async function handleOffersExport() {
+    setOffersExporting(true)
+    setError(null)
+    try {
+      await downloadAdminCsv('/api/v1/admin/supplier-offers/export-csv', 'CSV_FOURNISSEUR.csv')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur export CSV_FOURNISSEUR')
+    } finally {
+      setOffersExporting(false)
+    }
+  }
+
+  async function handleSubsExport() {
+    setSubsExporting(true)
+    setError(null)
+    try {
+      await downloadAdminCsv('/api/v1/admin/subscriptions/export-csv', 'CSV_ABONNEMENT.csv')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur export CSV_ABONNEMENT')
+    } finally {
+      setSubsExporting(false)
     }
   }
 
@@ -414,96 +459,146 @@ export function AdminCatalogPage() {
           className="admin-btn admin-btn--soft"
           onClick={() => setImportOpen((v) => !v)}
         >
-          {importOpen ? 'Fermer l’import CSV' : 'Import CSV (gros volume)'}
+          {importOpen ? 'Fermer les imports CSV' : 'Imports CSV (admin / fournisseur / abonnement)'}
         </button>
         {importOpen ? (
-          <div className="admin-csv-import">
-            <div className="admin-csv-import__controls">
-              <label className="admin-field">
-                <span>Société propriétaire (tous les produits du CSV)</span>
-                <select
-                  value={importCompanyTva}
-                  onChange={(e) => setImportCompanyTva(e.target.value)}
-                >
-                  <option value="">Urbanize (défaut)</option>
-                  {companies.map((c) => (
-                    <option key={c.tva_intra_com} value={c.tva_intra_com}>
-                      {c.company_name} ({c.tva_intra_com})
-                    </option>
-                  ))}
-                </select>
-                <small className="admin-catalog__hint">
-                  Cette valeur prime sur la colonne Fournisseur du CSV et s’applique à
-                  toutes les lignes importées. Change-la ici pour forcer une autre société.
-                </small>
-              </label>
-              <fieldset className="admin-csv-import__modes">
-                <legend>Mode d’intégration</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="import-mode"
-                    checked={importMode === 'additive'}
-                    onChange={() => setImportMode('additive')}
-                  />
-                  Additive — ajoute aux catalogues existants
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="import-mode"
-                    checked={importMode === 'destructive'}
-                    onChange={() => setImportMode('destructive')}
-                  />
-                  Destructive — vide les catalogues cibles existants avant import
-                </label>
-              </fieldset>
-            </div>
-            <div
-              className={`admin-csv-dropzone ${dragOver ? 'is-dragover' : ''} ${importFile ? 'has-file' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDragOver(true)
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragOver(false)
-                acceptCsvFile(e.dataTransfer.files?.[0])
-              }}
-            >
-              <p>
-                {importFile
-                  ? `Fichier : ${importFile.name}`
-                  : 'Glissez-déposez un CSV ici, ou cliquez pour parcourir'}
+          <div className="admin-csv-grid">
+            <article className="admin-csv-import">
+              <h3>CSV_ADMIN</h3>
+              <p className="admin-catalog__hint">
+                Arborescence, produits, attributs + offre URBANIZE (non abonné).
               </p>
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                onChange={(e) => acceptCsvFile(e.target.files?.[0])}
+              <CsvModeField
+                name="admin-csv-mode"
+                mode={adminMode}
+                onChange={setAdminMode}
+                destructiveHint="vide les catalogues cibles du fichier"
               />
-            </div>
-            <div className="admin-csv-import__actions">
-              <button
-                type="button"
-                className="admin-btn admin-btn--primary"
-                disabled={importing || !importFile}
-                onClick={() => void handleImport()}
-              >
-                {importing ? 'Import en cours…' : 'Lancer l’import'}
-              </button>
-              {importResult ? (
-                <p className="admin-catalog__hint">
-                  {importResult.rows_processed} lignes · {importResult.links_created} liaisons
-                  {importResult.catalogs_cleared > 0
-                    ? ` · ${importResult.catalogs_cleared} catalogues vidés`
-                    : ''}
-                  {importResult.errors.length > 0
-                    ? ` · ${importResult.errors.length} avertissement(s)`
-                    : ''}
-                </p>
+              <CsvDropzone
+                file={adminFile}
+                onFile={(f) => {
+                  setAdminFile(f)
+                  setAdminResult(null)
+                }}
+              />
+              <div className="admin-csv-import__actions">
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--primary"
+                  disabled={adminImporting || !adminFile}
+                  onClick={() => void handleAdminImport()}
+                >
+                  {adminImporting ? 'Import en cours…' : 'Importer CSV_ADMIN'}
+                </button>
+                {adminResult ? (
+                  <p className="admin-catalog__hint">
+                    {adminResult.rows_processed} lignes · {adminResult.offers_written ?? 0} offres
+                    {adminResult.catalogs_cleared > 0
+                      ? ` · ${adminResult.catalogs_cleared} catalogues vidés`
+                      : ''}
+                  </p>
+                ) : null}
+              </div>
+              {adminResult ? (
+                <CsvErrorList label="Avertissements" items={adminResult.errors} />
               ) : null}
-            </div>
+            </article>
+
+            <article className="admin-csv-import">
+              <h3>CSV_FOURNISSEUR</h3>
+              <p className="admin-catalog__hint">
+                1 ligne = 1 produit + 1 fournisseur. Bloqué si un fournisseur est inconnu.
+              </p>
+              <CsvModeField
+                name="offers-csv-mode"
+                mode={offersMode}
+                onChange={setOffersMode}
+                destructiveHint="purge l’historique d’offres des fournisseurs du fichier"
+              />
+              <CsvDropzone
+                file={offersFile}
+                onFile={(f) => {
+                  setOffersFile(f)
+                  setOffersResult(null)
+                }}
+              />
+              <div className="admin-csv-import__actions">
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--primary"
+                  disabled={offersImporting || !offersFile}
+                  onClick={() => void handleOffersImport()}
+                >
+                  {offersImporting ? 'Import en cours…' : 'Importer CSV_FOURNISSEUR'}
+                </button>
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--soft"
+                  disabled={offersExporting}
+                  onClick={() => void handleOffersExport()}
+                >
+                  {offersExporting ? 'Export…' : 'Exporter'}
+                </button>
+                {offersResult ? (
+                  <p className="admin-catalog__hint">
+                    {offersResult.applied ? 'Écrit' : 'Bloqué'} · {offersResult.rows_processed} lignes
+                    {offersResult.offers_deleted > 0
+                      ? ` · ${offersResult.offers_deleted} historiques purgés`
+                      : ''}
+                  </p>
+                ) : null}
+              </div>
+              {offersResult ? <CsvErrorList items={offersResult.errors} /> : null}
+            </article>
+
+            <article className="admin-csv-import">
+              <h3>CSV_ABONNEMENT</h3>
+              <p className="admin-catalog__hint">
+                Fournisseur + statut. URBANIZE reste toujours non abonné.
+              </p>
+              <CsvModeField
+                name="subs-csv-mode"
+                mode={subsMode}
+                onChange={setSubsMode}
+                destructiveHint="vide la table puis réécrit les paires du fichier"
+              />
+              <CsvDropzone
+                file={subsFile}
+                onFile={(f) => {
+                  setSubsFile(f)
+                  setSubsResult(null)
+                }}
+              />
+              <div className="admin-csv-import__actions">
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--primary"
+                  disabled={subsImporting || !subsFile}
+                  onClick={() => void handleSubsImport()}
+                >
+                  {subsImporting ? 'Import en cours…' : 'Importer CSV_ABONNEMENT'}
+                </button>
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--soft"
+                  disabled={subsExporting}
+                  onClick={() => void handleSubsExport()}
+                >
+                  {subsExporting ? 'Export…' : 'Exporter'}
+                </button>
+                {subsResult ? (
+                  <p className="admin-catalog__hint">
+                    {subsResult.applied ? 'Écrit' : 'Bloqué'} · {subsResult.rows_processed} lignes
+                  </p>
+                ) : null}
+              </div>
+              {subsResult ? (
+                <>
+                  <CsvErrorList items={subsResult.errors} />
+                  <CsvErrorList label="Avertissements" items={subsResult.warnings} />
+                </>
+              ) : null}
+            </article>
           </div>
         ) : null}
       </div>
@@ -691,8 +786,8 @@ export function AdminCatalogPage() {
                   <tr>
                     <th>SKU admin</th>
                     <th>Produit</th>
-                    <th>Société</th>
-                    <th>Prix</th>
+                    <th>Prix min</th>
+                    <th>Fournisseurs</th>
                     <th>État</th>
                   </tr>
                 </thead>
@@ -709,10 +804,10 @@ export function AdminCatalogPage() {
                           {p.product_name}
                         </Link>
                       </td>
-                      <td>{p.company_name}</td>
                       <td>
                         {p.price.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} {p.currency}
                       </td>
+                      <td>{p.supplier_count ?? 0}</td>
                       <td>
                         <span
                           className={

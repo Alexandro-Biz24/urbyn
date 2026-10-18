@@ -74,6 +74,60 @@ function catalogToMassifType(catalog: MassifLeafCatalog): MassifType | null {
   return null;
 }
 
+type MassifFilterMode = 'typology' | 'poids'
+
+interface MassifFilterNode {
+  id: string
+  label: string
+  products: MassifProduct[]
+  children: MassifFilterNode[]
+}
+
+function buildMassifFilterTree(products: MassifProduct[], mode: MassifFilterMode): MassifFilterNode[] {
+  const root: MassifFilterNode = { id: '', label: '', products: [], children: [] }
+  const index = new Map<string, MassifFilterNode>([['', root]])
+
+  const ensure = (path: string[]) => {
+    let parent = root
+    const acc: string[] = []
+    for (const label of path) {
+      acc.push(label)
+      const id = acc.join('\u0000')
+      let node = index.get(id)
+      if (!node) {
+        node = { id, label, products: [], children: [] }
+        index.set(id, node)
+        parent.children.push(node)
+      }
+      parent = node
+    }
+    return parent
+  }
+
+  for (const product of products) {
+    const raw = mode === 'typology' ? product.typology_paths : product.lestage_paths
+    const paths = (raw ?? []).filter((path) => path.length > 0)
+    if (paths.length === 0) {
+      ensure(['Autre']).products.push(product)
+      continue
+    }
+    for (const path of paths) {
+      ensure(path).products.push(product)
+    }
+  }
+
+  const sortNode = (node: MassifFilterNode) => {
+    node.children.sort((a, b) => {
+      if (a.label === 'Autre') return 1
+      if (b.label === 'Autre') return -1
+      return a.label.localeCompare(b.label, 'fr')
+    })
+    node.children.forEach(sortNode)
+  }
+  sortNode(root)
+  return root.children
+}
+
 function findCatalogForFamily(
   catalogs: MassifLeafCatalog[],
   family: MassifType,
@@ -140,6 +194,190 @@ function getMassifRecommendation(height: HelperHeight, typology: HelperTypology)
   }
 }
 
+function MassifProductChoice({
+  product,
+  selected,
+  onSelect,
+}: {
+  product: MassifProduct
+  selected: boolean
+  onSelect: (product: MassifProduct) => void
+}) {
+  const { longueur, largeur, hauteur } = product.dimensions
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(product)}
+      className={cn(
+        'w-full text-left p-4 rounded-xl border transition-all',
+        selected
+          ? 'border-black bg-black text-white shadow-lg'
+          : 'border-gray-200 bg-white hover:border-black hover:shadow-sm text-gray-900',
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="font-bold text-sm">{product.product_name}</p>
+            {selected && <Check className="w-4 h-4 shrink-0" />}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-1">
+            {longueur != null && (
+              <span className={selected ? 'text-gray-300' : 'text-gray-500'}>
+                L : {formatDim(longueur)}
+              </span>
+            )}
+            {largeur != null && (
+              <span className={selected ? 'text-gray-300' : 'text-gray-500'}>
+                l : {formatDim(largeur)}
+              </span>
+            )}
+            {hauteur != null && (
+              <span className={selected ? 'text-gray-300' : 'text-gray-500'}>
+                H : {formatDim(hauteur)}
+              </span>
+            )}
+          </div>
+          {(product.description || '').trim() ? (
+            <p className={cn('text-xs mt-1 line-clamp-2', selected ? 'text-gray-300' : 'text-gray-500')}>
+              {product.description}
+            </p>
+          ) : null}
+        </div>
+        <div className="text-right shrink-0">
+          <p className="font-bold text-sm">{product.poids} kg</p>
+          {product.price > 0 && (
+            <p className={cn('text-xs mt-0.5', selected ? 'text-gray-300' : 'text-gray-500')}>
+              {product.price.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} {product.currency}
+            </p>
+          )}
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function MassifFilterBranch({
+  node,
+  openGroups,
+  selectedProductId,
+  onToggle,
+  onSelect,
+}: {
+  node: MassifFilterNode
+  openGroups: Record<string, boolean>
+  selectedProductId: number | null
+  onToggle: (id: string) => void
+  onSelect: (product: MassifProduct) => void
+}) {
+  const hasChildren = node.children.length > 0
+  const hasProducts = node.products.length > 0
+  const expandable = hasProducts && !hasChildren
+  const expanded = !expandable || Boolean(openGroups[node.id])
+  return (
+    <div className="space-y-2">
+      {expandable ? (
+        <button
+          type="button"
+          onClick={() => onToggle(node.id)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-sm font-bold text-gray-900 hover:border-black"
+        >
+          <span>
+            {expanded ? '▾' : '▸'} {node.label}
+          </span>
+          <span className="text-xs font-medium text-gray-500">{node.products.length}</span>
+        </button>
+      ) : (
+        <div className="px-1 pt-2 text-sm font-bold text-gray-900">{node.label}</div>
+      )}
+      {hasChildren ? (
+        <div className="space-y-2 border-l border-gray-200 pl-3">
+          {node.children.map((child) => (
+            <MassifFilterBranch
+              key={child.id}
+              node={child}
+              openGroups={openGroups}
+              selectedProductId={selectedProductId}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      ) : null}
+      {hasProducts && expanded ? (
+        <div className="space-y-2">
+          {node.products.map((product) => (
+            <MassifProductChoice
+              key={`${node.id}-${product.product_id}`}
+              product={product}
+              selected={selectedProductId === product.product_id}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function MassifFilterList({
+  products,
+  mode,
+  openGroups,
+  selectedProductId,
+  onMode,
+  onToggle,
+  onSelect,
+}: {
+  products: MassifProduct[]
+  mode: MassifFilterMode
+  openGroups: Record<string, boolean>
+  selectedProductId: number | null
+  onMode: (mode: MassifFilterMode) => void
+  onToggle: (id: string) => void
+  onSelect: (product: MassifProduct) => void
+}) {
+  const nodes = buildMassifFilterTree(products, mode)
+  return (
+    <div>
+      <div className="mb-4 flex gap-2">
+        <button
+          type="button"
+          onClick={() => onMode('typology')}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-sm font-bold',
+            mode === 'typology' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-700',
+          )}
+        >
+          Typologie
+        </button>
+        <button
+          type="button"
+          onClick={() => onMode('poids')}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-sm font-bold',
+            mode === 'poids' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-700',
+          )}
+        >
+          Poids
+        </button>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node) => (
+          <MassifFilterBranch
+            key={node.id}
+            node={node}
+            openGroups={openGroups}
+            selectedProductId={selectedProductId}
+            onToggle={onToggle}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Composant ─────────────────────────────────────────────────────────────────
 export function MassifSelectionPage() {
   const navigate = useNavigate();
@@ -165,6 +403,8 @@ export function MassifSelectionPage() {
   const [apiLoading, setApiLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiProducts, setApiProducts] = useState<MassifProduct[]>([]);
+  const [filterMode, setFilterMode] = useState<MassifFilterMode>('typology');
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   // Section « Aide au dimensionnement » ouverte par défaut à l'arrivée sur la page.
   const [helperOpen, setHelperOpen] = useState(true);
@@ -242,6 +482,8 @@ export function MassifSelectionPage() {
 
     setSelectedCatalog(catalog);
     setSelectedProduct(null);
+    setFilterMode('typology');
+    setOpenGroups({});
     setApiError(null);
     setApiProducts([]);
     setStep('dimension');
@@ -650,77 +892,20 @@ export function MassifSelectionPage() {
               )}
 
               {!apiLoading && !apiError && apiProducts.length > 0 && (
-                <div className="space-y-3">
-                  {apiProducts.map((product) => {
-                    const isSelected = selectedProduct?.product_id === product.product_id;
-                    const { longueur, largeur, hauteur } = product.dimensions;
-                    return (
-                      <button
-                        key={product.product_id}
-                        type="button"
-                        onClick={() => setSelectedProduct(product)}
-                        className={cn(
-                          'w-full text-left p-4 rounded-xl border transition-all',
-                          isSelected
-                            ? 'border-black bg-black text-white shadow-lg'
-                            : 'border-gray-200 bg-white hover:border-black hover:shadow-sm text-gray-900',
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <p className="font-bold text-sm">{product.product_name}</p>
-                              {isSelected && <Check className="w-4 h-4 shrink-0" />}
-                            </div>
-                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-1">
-                              {longueur != null && (
-                                <span className={isSelected ? 'text-gray-300' : 'text-gray-500'}>
-                                  L : {formatDim(longueur)}
-                                </span>
-                              )}
-                              {largeur != null && (
-                                <span className={isSelected ? 'text-gray-300' : 'text-gray-500'}>
-                                  l : {formatDim(largeur)}
-                                </span>
-                              )}
-                              {hauteur != null && (
-                                <span className={isSelected ? 'text-gray-300' : 'text-gray-500'}>
-                                  H : {formatDim(hauteur)}
-                                </span>
-                              )}
-                            </div>
-                            {(product.description || '').trim() ? (
-                              <p
-                                className={cn(
-                                  'text-xs mt-1 line-clamp-2',
-                                  isSelected ? 'text-gray-300' : 'text-gray-500',
-                                )}
-                              >
-                                {product.description}
-                              </p>
-                            ) : null}
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="font-bold text-sm">{product.poids} kg</p>
-                            {product.price > 0 && (
-                              <p
-                                className={cn(
-                                  'text-xs mt-0.5',
-                                  isSelected ? 'text-gray-300' : 'text-gray-500',
-                                )}
-                              >
-                                {product.price.toLocaleString('fr-FR', {
-                                  minimumFractionDigits: 2,
-                                })}{' '}
-                                {product.currency}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                <MassifFilterList
+                  products={apiProducts}
+                  mode={filterMode}
+                  openGroups={openGroups}
+                  selectedProductId={selectedProduct?.product_id ?? null}
+                  onMode={(mode) => {
+                    setFilterMode(mode);
+                    setOpenGroups({});
+                  }}
+                  onToggle={(id) =>
+                    setOpenGroups((prev) => ({ ...prev, [id]: !prev[id] }))
+                  }
+                  onSelect={setSelectedProduct}
+                />
               )}
 
               <Button

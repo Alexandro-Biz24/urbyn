@@ -37,6 +37,7 @@ import {
   writeAuthSignupPrefill,
 } from '../lib/authSignupPrefill';
 import { createClientOrder } from '../api/orders';
+import { pricingContextFromSession } from '../lib/orderPricing';
 
 interface DeliveryAddress {
   company?: string;
@@ -140,6 +141,21 @@ function TruckGauge({ fillPct, truckIndex, totalTrucks, label }: {
   );
 }
 
+function pricingFlags(address?: { postalCode?: string; city?: string; country?: string } | null) {
+  const ctx = pricingContextFromSession(
+    address?.postalCode || '',
+    address?.city || '',
+    address?.country || 'France',
+  )
+  return {
+    massifTransport: ctx.massif_transport,
+    massifDechargement: ctx.massif_dechargement,
+    massifInstallation: ctx.massif_installation,
+    totemTransport: ctx.totem_transport,
+    totemInstallation: ctx.totem_installation,
+  }
+}
+
 function massifSupplierLabel(items: { details?: Record<string, unknown> }[]): string {
   const names = uniqueSupplierNames(items as never);
   return names.length > 0 ? names.join(', ') : 'Fournisseur';
@@ -234,6 +250,7 @@ export function ChiffrageFinalPage() {
             totemInstallFee: pending.totemInstallFee || 0,
             massifShipping: pending.massifShipping,
             totalHT: pending.totalHT,
+            ...pricingFlags(pending.deliveryAddress),
           })
             .then(() => finishOrderSuccess())
             .catch(() => finishOrderSuccess());
@@ -420,6 +437,7 @@ export function ChiffrageFinalPage() {
         totemInstallFee,
         massifShipping: massifShipping.groups,
         totalHT,
+        ...pricingFlags(deliveryAddress),
       });
       finishOrderSuccess();
     } catch (err) {
