@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ProgressSteps } from '../components/ProgressSteps';
 import { Card, CardContent } from '../components/ui/card';
-import { Signpost, HardHat, Box, Wind, FileText, Building2, LayoutGrid } from 'lucide-react';
+import { Signpost, HardHat, Box, Wind, FileText, Building2, LayoutGrid, PanelTop, Umbrella, Sparkles } from 'lucide-react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import palissadeImg from 'figma:asset/palissade-bois.png';
 import totemImg from 'figma:asset/totem-urbain.png';
@@ -67,6 +67,38 @@ export function DefinirBesoinPage() {
       image: "https://images.unsplash.com/photo-1760561994147-8b6fd8c7fc5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMGRvY3VtZW50JTIwY29udHJhY3QlMjBzcGVjaWZpY2F0aW9uc3xlbnwxfHx8fDE3Njk3MTE0NDZ8MA&ixlib=rb-4.1.0&q=80&w=1080"
     }
   ];
+
+  // Habillage thermique : pas encore de catalogue ni de tarif en ligne, ces
+  // solutions sont chiffrées sur mesure. Les cartes n'ont pas de visuel tant
+  // que nous n'avons pas de photos des produits.
+  const ensembleThermique = [
+    {
+      id: 'toile-facade',
+      title: 'Toile de protection pour façade',
+      description: 'Réduction de la chaleur reçue par le bâti',
+      icon: PanelTop
+    },
+    {
+      id: 'toile-patio',
+      title: 'Toile de protection pour patio',
+      description: 'Réduction de la chaleur reçue par les patios',
+      icon: Umbrella
+    },
+    {
+      id: 'film-solaire',
+      title: 'Film solaire pour vitrage',
+      description: 'Performance énergétique et luminosité préservée',
+      icon: Sparkles
+    }
+  ];
+
+  const handleThermiqueSelect = () => {
+    toast.info('Chiffrage sur mesure', {
+      description:
+        "L'habillage thermique est étudié au cas par cas. Décrivez-nous votre projet et nous revenons vers vous avec une proposition."
+    });
+    navigate('/contact');
+  };
 
   const handleProductSelect = (productId: string) => {
     if (productId === 'facade-echafaudage') {
@@ -150,7 +182,39 @@ export function DefinirBesoinPage() {
             </div>
           </div>
 
-          {/* Ensemble 2 : Services d'étude */}
+          {/* Ensemble 2 : Habillage thermique */}
+          <div className="mb-16">
+            <h2 className="text-2xl font-bold mb-2 text-black">Habillage thermique</h2>
+            <p className="text-sm text-gray-600 mb-8">
+              Solutions chiffrées sur mesure — décrivez-nous votre projet
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {ensembleThermique.map((solution) => {
+                const Icon = solution.icon;
+                return (
+                  <Card
+                    key={solution.id}
+                    onClick={handleThermiqueSelect}
+                    className="cursor-pointer transition-all hover:shadow-2xl group bg-white overflow-hidden border-2 border-slate-200 hover:border-black"
+                  >
+                    <CardContent className="p-6 text-center">
+                      <div className="w-14 h-14 bg-white rounded-lg flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:scale-110 transition-transform">
+                        <Icon className="w-7 h-7 text-black" strokeWidth={2.5} />
+                      </div>
+                      <h4 className="text-base font-bold mb-2 text-black group-hover:underline">
+                        {solution.title}
+                      </h4>
+                      <p className="text-black text-xs leading-tight">
+                        {solution.description}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Ensemble 3 : Services d'étude */}
           <div>
             <h2 className="text-2xl font-bold mb-8 text-black">Accompagnements</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">

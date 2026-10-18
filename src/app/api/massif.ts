@@ -80,6 +80,8 @@ export interface MassifProduct {
     name: string
     value: string | null
   }>
+  typology_paths?: string[][]
+  lestage_paths?: string[][]
 }
 
 export interface MassifProductsResponse {

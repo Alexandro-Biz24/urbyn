@@ -35,6 +35,11 @@ interface CompanyOnboardingStepProps {
 
 type AffiliationMode = 'existing' | 'new'
 
+function isCompanyIdentifier(query: string): boolean {
+  const compact = query.replace(/[\s.-]/g, '').toUpperCase()
+  return /^FR\d{11}$/.test(compact) || /^\d{9}$/.test(compact) || /^\d{14}$/.test(compact)
+}
+
 export function CompanyOnboardingStep({
   user,
   siblingPrefill,
@@ -358,14 +363,17 @@ export function CompanyOnboardingStep({
             <input
               value={searchQuery}
               onChange={(e) => {
-                setSearchQuery(e.target.value)
-                setNewCo((c) => ({ ...c, company_name: e.target.value }))
+                const value = e.target.value
+                setSearchQuery(value)
+                if (!isCompanyIdentifier(value)) {
+                  setNewCo((c) => ({ ...c, company_name: value }))
+                }
               }}
-              placeholder="Nom de l'entreprise…"
-              autoComplete="organization"
+              placeholder="Nom, SIREN ou TVA intracommunautaire"
+              autoComplete="off"
             />
             <span className="company-step__hint">
-              Données publiques gratuites (API Recherche Entreprises — équivalent léger Pappers).
+              Par nom, par SIREN ou par TVA intracommunautaire.
             </span>
           </label>
 
@@ -376,6 +384,7 @@ export function CompanyOnboardingStep({
                 <li key={hit.siren}>
                   <button type="button" onClick={() => applySearchHit(hit)}>
                     <strong>{hit.company_name}</strong>
+                    <span> · SIREN {hit.siren}</span>
                     {hit.tva_intra_com ? (
                       <span> · TVA {hit.tva_intra_com}</span>
                     ) : null}

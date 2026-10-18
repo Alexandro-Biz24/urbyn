@@ -22,6 +22,7 @@ function CompanyTable({
           <th>Ville</th>
           <th>Users</th>
           <th>Produits</th>
+          <th>Abonné</th>
         </tr>
       </thead>
       <tbody>
@@ -39,6 +40,7 @@ function CompanyTable({
             <td>{c.city ?? '—'}</td>
             <td>{c.user_count}</td>
             <td>{c.product_count}</td>
+            <td>{c.abonne ? 'Oui' : 'Non'}</td>
           </tr>
         ))}
       </tbody>

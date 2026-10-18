@@ -49,6 +49,7 @@ export interface AdminCatalogProductEntry {
   price: number
   currency: string
   is_active: boolean
+  supplier_count?: number
 }
 
 export interface AdminProductAttribute {
@@ -57,6 +58,19 @@ export interface AdminProductAttribute {
   catalog_id?: number | null
   catalog_name?: string | null
   definition_id?: number | null
+}
+
+export interface AdminProductSupplierOffer {
+  company_name: string
+  company_tva: string
+  price: number
+  urbyn_marge: number
+  delai_jours: number
+  stock: number
+  currency: string
+  recorded_at: string
+  source: string
+  abonne: boolean
 }
 
 export interface AdminProductDetail {
@@ -72,6 +86,7 @@ export interface AdminProductDetail {
   catalog_names: string[]
   mandatory_attributes: AdminProductAttribute[]
   free_attributes: AdminProductAttribute[]
+  supplier_offers: AdminProductSupplierOffer[]
 }
 
 function adminHeaders(): Record<string, string> {
@@ -145,6 +160,11 @@ export function updateAdminCatalog(
 
 export type CatalogCsvImportMode = 'additive' | 'destructive'
 
+export interface CatalogCsvImportRowError {
+  line: number
+  message: string
+}
+
 export interface CatalogCsvImportResult {
   mode: CatalogCsvImportMode
   products_created: number
@@ -152,8 +172,31 @@ export interface CatalogCsvImportResult {
   catalogs_created: number
   catalogs_cleared: number
   links_created: number
+  offers_written?: number
   rows_processed: number
-  errors: { line: number; message: string }[]
+  errors: CatalogCsvImportRowError[]
+}
+
+export interface SupplierOffersCsvImportResult {
+  mode: CatalogCsvImportMode
+  applied: boolean
+  rows_processed: number
+  offers_written: number
+  offers_unchanged: number
+  offers_deleted: number
+  suppliers: string[]
+  errors: CatalogCsvImportRowError[]
+}
+
+export interface SubscriptionsCsvImportResult {
+  mode: CatalogCsvImportMode
+  applied: boolean
+  rows_processed: number
+  subscriptions_created: number
+  subscriptions_updated: number
+  subscriptions_deleted: number
+  errors: CatalogCsvImportRowError[]
+  warnings: CatalogCsvImportRowError[]
 }
 
 export interface CatalogProductAttribute {
@@ -183,18 +226,13 @@ export function setAdminCatalogAttributeMandatory(
   )
 }
 
-export async function importAdminCatalogCsv(params: {
-  file: File
-  mode: CatalogCsvImportMode
-  companyTva: string
-}): Promise<CatalogCsvImportResult> {
+async function postAdminCsv<T>(path: string, file: File, mode: CatalogCsvImportMode): Promise<T> {
   const token = loadAdminToken()
   const form = new FormData()
-  form.append('file', params.file)
-  form.append('mode', params.mode)
-  form.append('company_tva_intra_com', params.companyTva)
+  form.append('file', file)
+  form.append('mode', mode)
 
-  const response = await fetch(`${getApiBase()}/api/v1/admin/catalogs/import-csv`, {
+  const response = await fetch(`${getApiBase()}${path}`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
@@ -217,5 +255,51 @@ export async function importAdminCatalogCsv(params: {
     throw new ApiError(message, response.status, code)
   }
 
-  return response.json() as Promise<CatalogCsvImportResult>
+  return response.json() as Promise<T>
+}
+
+export function importAdminCatalogCsv(params: {
+  file: File
+  mode: CatalogCsvImportMode
+}): Promise<CatalogCsvImportResult> {
+  return postAdminCsv('/api/v1/admin/catalogs/import-csv', params.file, params.mode)
+}
+
+export function importAdminSupplierOffersCsv(params: {
+  file: File
+  mode: CatalogCsvImportMode
+}): Promise<SupplierOffersCsvImportResult> {
+  return postAdminCsv('/api/v1/admin/supplier-offers/import-csv', params.file, params.mode)
+}
+
+export function importAdminSubscriptionsCsv(params: {
+  file: File
+  mode: CatalogCsvImportMode
+}): Promise<SubscriptionsCsvImportResult> {
+  return postAdminCsv('/api/v1/admin/subscriptions/import-csv', params.file, params.mode)
+}
+
+export async function downloadAdminCsv(path: string, filename: string): Promise<void> {
+  const token = loadAdminToken()
+  const response = await fetch(`${getApiBase()}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) {
+    let message = response.statusText
+    try {
+      const body = await response.json()
+      if (body.detail?.message) message = body.detail.message
+      else if (typeof body.detail === 'string') message = body.detail
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(message, response.status)
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }

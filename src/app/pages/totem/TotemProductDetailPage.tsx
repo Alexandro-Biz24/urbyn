@@ -49,6 +49,9 @@ import {
   totemVolumeDiscountBanner,
   totemVolumeDiscountPercentLabel,
 } from '../../lib/totemDiscount'
+import { estimateProduct, type EstimateResult, type PricingOffer } from '../../api/pricing'
+import { cartLinesFromItems, pricingContextFromSession, totemTransportSelected } from '../../lib/orderPricing'
+import { EstimateOfferPopup } from '../../components/EstimateOfferPopup'
 
 const POSTAL_RULES: Record<string, { pattern: RegExp; example: string }> = {
   France: { pattern: /^\d{5}$/, example: '75011' },
@@ -93,7 +96,7 @@ export function TotemProductDetailPage() {
   const [searchParams] = useSearchParams()
   const familyId = searchParams.get('family')
   const navigate = useNavigate()
-  const { addItems, items, closeSidebar } = useCart()
+  const { addItems, items } = useCart()
 
   const [product, setProduct] = useState<TotemProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -108,6 +111,11 @@ export function TotemProductDetailPage() {
   const [deliveryPostalCode, setDeliveryPostalCode] = useState('')
   const [deliveryCountry, setDeliveryCountry] = useState('France')
   const [deliveryInfoValidated, setDeliveryInfoValidated] = useState(false)
+  const [estimateOpen, setEstimateOpen] = useState(false)
+  const [estimateLoading, setEstimateLoading] = useState(false)
+  const [estimateError, setEstimateError] = useState<string | null>(null)
+  const [estimateResult, setEstimateResult] = useState<EstimateResult | null>(null)
+  const transportOn = totemTransportSelected()
   const [postalCodeError, setPostalCodeError] = useState(false)
   const [totemRoadKm, setTotemRoadKm] = useState<number | null>(null)
 
@@ -266,13 +274,17 @@ export function TotemProductDetailPage() {
   const shippingHT = deliveryInfoValidated ? totemShipping.shippingTotal : 0
   const grandTotalHT = productsHT + shippingHT + installFee
 
-  const handleAddToCart = () => {
+  const handleAddToCart = (supplier?: {
+    tva: string
+    name: string
+    unitPrice: number
+    addedTotal: number
+  }) => {
     if (!product) return
     const panelPrice = computeTotemPanelPrintPrice(product)
     const panelSize = product.panel_format || '—'
     const label = product.product_name.replace(/^totem\s+/i, '')
-    // Prix catalogue : la remise volume est appliquée au panier / totaux (selon qty globale).
-    const unitPrice = product.price
+    const unitPrice = supplier?.unitPrice ?? product.price
     const totemId = `totem-product-${product.product_id}`
 
     const batch = [
@@ -291,9 +303,12 @@ export function TotemProductDetailPage() {
           panelSize,
           panelPrice,
           panelsPerUnit,
-          companyName: product.company_name ?? null,
-          companyTva: product.company_tva ?? null,
+          companyName: supplier?.name ?? product.company_name ?? null,
+          companyTva: supplier?.tva ?? product.company_tva ?? null,
           companyZip: product.company_zip ?? null,
+          supplierName: supplier?.name ?? null,
+          supplierTva: supplier?.tva ?? null,
+          addedTotal: supplier?.addedTotal ?? null,
         },
       },
       ...(panelsEnabled
@@ -322,7 +337,6 @@ export function TotemProductDetailPage() {
         : []),
     ]
     addItems(batch)
-    closeSidebar()
 
     localStorage.setItem(
       'deliveryInfo',
@@ -330,7 +344,43 @@ export function TotemProductDetailPage() {
     )
     localStorage.setItem('shippingCostTotem', String(totemShipping.shippingTotal))
     localStorage.setItem('totemShippingBreakdown', JSON.stringify(totemShipping))
-    navigate('/panier')
+  }
+
+  const handleEstimate = async () => {
+    if (!product) return
+    if (transportOn && !validatePostalCode(deliveryPostalCode, deliveryCountry)) {
+      setPostalCodeError(true)
+      setDeliveryFormOpen(true)
+      return
+    }
+    setEstimateLoading(true)
+    setEstimateError(null)
+    setEstimateResult(null)
+    setEstimateOpen(true)
+    try {
+      const result = await estimateProduct({
+        product_id: product.product_id,
+        quantity,
+        cart: cartLinesFromItems(items),
+        context: pricingContextFromSession(deliveryPostalCode, '', deliveryCountry),
+      })
+      setEstimateResult(result)
+    } catch (err) {
+      setEstimateError(err instanceof Error ? err.message : 'Estimation impossible.')
+    } finally {
+      setEstimateLoading(false)
+    }
+  }
+
+  const handlePickOffer = (offer: PricingOffer) => {
+    setEstimateOpen(false)
+    handleAddToCart({
+      tva: offer.supplier_tva,
+      name: offer.supplier_name,
+      unitPrice: offer.unit_price,
+      addedTotal: offer.added_total,
+    })
+    setQuantity(1)
   }
 
   return (
@@ -365,9 +415,6 @@ export function TotemProductDetailPage() {
                   <h1 className="text-3xl font-bold mb-2 text-black">
                     {product.product_name.replace(/^totem\s+/i, '')}
                   </h1>
-                  <p className="text-base font-semibold text-black">
-                    {formatPriceEur(product.price)}€ HT
-                  </p>
                 </div>
                 <span className="bg-black text-white text-xs font-bold px-3 py-1 rounded-full capitalize">
                   {offer}
@@ -617,83 +664,16 @@ export function TotemProductDetailPage() {
                             . Ajoutez des totems pour optimiser le transport.
                           </p>
                         ) : null}
-                        {deliveryInfoValidated ? (
-                          <p className="text-[11px] text-gray-600 mt-2">
-                            Livraison estimée :{' '}
-                            <strong className="text-black">
-                              {formatPriceEur(totemShipping.shippingTotal)}€
-                            </strong>
-                          </p>
-                        ) : (
+                        {transportOn && !deliveryInfoValidated ? (
                           <p className="text-[11px] text-amber-700 mt-2">
-                            Validez le code postal pour calculer le prix de livraison.
+                            Validez le code postal avant d&apos;estimer.
                           </p>
-                        )}
+                        ) : null}
                       </CardContent>
                     </Card>
                   ) : null}
 
-                  <Card className="border border-gray-300 bg-white shadow-sm">
-                    <CardContent className="p-4 space-y-2 text-sm">
-                      <p className="font-bold text-black mb-2">Récapitulatif (panier + sélection)</p>
-                      {cartTotemQty > 0 || cartPanelsHT > 0 || cartBalastsHT > 0 ? (
-                        <>
-                          {cartTotemsHT > 0 ? (
-                            <div className="flex justify-between text-gray-600">
-                              <span>Totems déjà au panier</span>
-                              <span>{formatPriceEur(cartTotemsHT)}€</span>
-                            </div>
-                          ) : null}
-                          {cartPanelsHT > 0 ? (
-                            <div className="flex justify-between text-gray-600">
-                              <span>Panneaux déjà au panier</span>
-                              <span>{formatPriceEur(cartPanelsHT)}€</span>
-                            </div>
-                          ) : null}
-                          {cartBalastsHT > 0 ? (
-                            <div className="flex justify-between text-gray-600">
-                              <span>Lests déjà au panier</span>
-                              <span>{formatPriceEur(cartBalastsHT)}€</span>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : null}
-                      <div className="flex justify-between text-gray-700">
-                        <span>
-                          Sélection · {quantity} totem{quantity > 1 ? 's' : ''}
-                          {discountPctLabel ? ` (${discountPctLabel})` : ''}
-                        </span>
-                        <span>{formatPriceEur(draftTotemsHT)}€</span>
-                      </div>
-                      {panelsEnabled ? (
-                        <div className="flex justify-between text-gray-700">
-                          <span>Sélection · {panelsQuantity} panneau(x)</span>
-                          <span>{formatPriceEur(draftPanelsHT)}€</span>
-                        </div>
-                      ) : null}
-                      {installFee > 0 ? (
-                        <div className="flex justify-between text-gray-700">
-                          <span>Installation</span>
-                          <span>{formatPriceEur(installFee)}€</span>
-                        </div>
-                      ) : null}
-                      <div className="flex justify-between text-gray-700">
-                        <span className="flex items-center gap-1">
-                          <Truck className="w-3.5 h-3.5" /> Livraison totems (mutualisée)
-                        </span>
-                        <span>
-                          {deliveryInfoValidated
-                            ? `${formatPriceEur(shippingHT)}€`
-                            : 'CP requis'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between font-bold text-black text-base pt-2 border-t border-gray-200">
-                        <span>Total HT estimé</span>
-                        <span>{formatPriceEur(grandTotalHT)}€</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-
+                  {transportOn ? (
                   <Card className="border border-gray-300 bg-gray-50">
                     <CardContent className="p-4">
                       <div className="space-y-3">
@@ -808,6 +788,7 @@ export function TotemProductDetailPage() {
                       </div>
                     </CardContent>
                   </Card>
+                  ) : null}
 
                   <Card className="border border-gray-300 bg-gray-50">
                     <CardContent className="p-4">
@@ -816,9 +797,6 @@ export function TotemProductDetailPage() {
                           <div className="flex items-start justify-between gap-3 mb-3">
                             <div>
                               <p className="text-black font-bold">Installation complète</p>
-                              <p className="text-sm font-bold text-black mt-1">
-                                + {INSTALLATION_PRICE}€ HT
-                              </p>
                             </div>
                             <span className="text-[11px] font-semibold bg-black text-white px-2.5 py-1 rounded-full shrink-0">
                               Sélectionnée
@@ -852,19 +830,19 @@ export function TotemProductDetailPage() {
                     </CardContent>
                   </Card>
 
-                  {!deliveryInfoValidated ? (
+                  {transportOn && !deliveryInfoValidated ? (
                     <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-center">
                       Veuillez renseigner votre code postal et votre pays dans la section{' '}
-                      <strong>Comment les obtenir</strong> avant d'ajouter au panier.
+                      <strong>Comment les obtenir</strong> avant d&apos;estimer.
                     </p>
                   ) : null}
 
                   <Button
-                    onClick={handleAddToCart}
-                    disabled={!deliveryInfoValidated}
+                    onClick={handleEstimate}
+                    disabled={(transportOn && !deliveryInfoValidated) || estimateLoading}
                     className="w-full bg-black hover:bg-gray-800 text-white py-6 text-lg disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Ajouter au panier
+                    Estimer ma commande
                     <ArrowRight className="w-5 h-5 ml-2" />
                   </Button>
                 </div>
@@ -873,6 +851,15 @@ export function TotemProductDetailPage() {
           </div>
         )}
       </div>
+      <EstimateOfferPopup
+        open={estimateOpen}
+        loading={estimateLoading}
+        error={estimateError}
+        result={estimateResult}
+        showDelivery={transportOn}
+        onClose={() => setEstimateOpen(false)}
+        onPick={handlePickOffer}
+      />
     </div>
   )
 }

@@ -6,7 +6,8 @@ import { Button } from '../components/ui/button';
 import { ArrowRight, Trash2, ShoppingBag, MapPin, Plus, Minus, CheckCircle, AlertCircle, ShieldCheck, Truck } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import {
-  MASSIF_INSTALLATION_EUR,
+  MASSIF_INSTALLATION_UNIT_EUR,
+  computeMassifServiceFees,
   TOTEM_INSTALLATION_EUR,
   computeMassifShippingBySupplier,
   isMassifInstallationSelected,
@@ -25,6 +26,8 @@ import {
   totemVolumeDiscountPercentLabel,
 } from '../lib/totemDiscount';
 import { maxPanelsForTotemQty } from '../lib/totemPanels';
+import { quoteCart, type CartQuote } from '../api/pricing';
+import { cartLinesFromItems, pricingContextFromSession } from '../lib/orderPricing';
 
 import totemCaissonBoisImg from '../../imports/totem-caisson-bois.jpg';
 
@@ -77,6 +80,7 @@ export function CartPage() {
     street?: string; postalCode?: string; city?: string; country?: string;
   } | null>(null);
   const [totemRoadKm, setTotemRoadKm] = useState<number | null>(null);
+  const [serverQuote, setServerQuote] = useState<CartQuote | null>(null);
 
   useEffect(() => {
     const full = localStorage.getItem('deliveryAddress');
@@ -84,6 +88,32 @@ export function CartPage() {
     const partial = localStorage.getItem('deliveryInfo');
     if (partial) setSavedDeliveryAddress(JSON.parse(partial));
   }, []);
+
+  useEffect(() => {
+    const lines = cartLinesFromItems(items);
+    if (!lines.length) {
+      setServerQuote(null);
+      return;
+    }
+    let cancelled = false;
+    quoteCart({
+      lines,
+      context: pricingContextFromSession(
+        savedDeliveryAddress?.postalCode ?? '',
+        savedDeliveryAddress?.city ?? '',
+        savedDeliveryAddress?.country ?? 'France',
+      ),
+    })
+      .then((quote) => {
+        if (!cancelled) setServerQuote(quote);
+      })
+      .catch(() => {
+        if (!cancelled) setServerQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [items, savedDeliveryAddress]);
 
   useEffect(() => {
     const pc = savedDeliveryAddress?.postalCode?.trim();
@@ -264,8 +294,9 @@ export function CartPage() {
     [totemItems, savedDeliveryAddress?.postalCode, savedDeliveryAddress?.country],
   );
 
-  const massifInstallFee =
-    massifItems.length > 0 && isMassifInstallationSelected() ? MASSIF_INSTALLATION_EUR : 0;
+  const massifFees = computeMassifServiceFees(massifItems);
+  const massifInstallFee = massifFees.installation;
+  const massifDechargementFee = massifFees.dechargement;
   const totemInstallFee =
     totemItems.length > 0 && isTotemInstallationSelected() ? TOTEM_INSTALLATION_EUR : 0;
   const massifShipAmount = massifItems.length > 0 ? massifShipping.shippingTotal : 0;
@@ -278,6 +309,22 @@ export function CartPage() {
   const shippingCost = massifShipAmount + totemShipAmount + panelShipAmount;
 
   useEffect(() => {
+    if (serverQuote) {
+      localStorage.setItem('shippingCostMassif', String(serverQuote.shipping));
+      localStorage.setItem('massifInstallFee', String(serverQuote.installation));
+      localStorage.setItem('massifDechargementFee', String(serverQuote.dechargement));
+      localStorage.setItem('totemInstallFee', String(serverQuote.totem_installation));
+      localStorage.setItem(
+        'shippingCost',
+        String(
+          serverQuote.shipping +
+            serverQuote.dechargement +
+            serverQuote.installation +
+            serverQuote.totem_installation,
+        ),
+      );
+      return;
+    }
     if (items.length === 0) return;
     if (!hasPanelsOnlyShip) {
       localStorage.setItem('shippingCostOther', '0');
@@ -285,10 +332,11 @@ export function CartPage() {
     localStorage.setItem('shippingCostMassif', String(massifShipAmount));
     localStorage.setItem('shippingCostTotem', String(totemShipAmount));
     localStorage.setItem('massifInstallFee', String(massifInstallFee));
+    localStorage.setItem('massifDechargementFee', String(massifDechargementFee));
     localStorage.setItem('totemInstallFee', String(totemInstallFee));
     localStorage.setItem(
       'shippingCost',
-      String(shippingCost + massifInstallFee + totemInstallFee),
+      String(shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee),
     );
     localStorage.setItem('totemShippingBreakdown', JSON.stringify(totemShipping));
   }, [
@@ -296,13 +344,29 @@ export function CartPage() {
     massifShipAmount,
     totemShipAmount,
     massifInstallFee,
+    massifDechargementFee,
     totemInstallFee,
     shippingCost,
     hasPanelsOnlyShip,
     totemShipping,
+    serverQuote,
   ]);
 
-  const totalHT  = productsHT + shippingCost + massifInstallFee + totemInstallFee;
+  const panelExtra = serverQuote
+    ? items
+        .filter((item) => item.details?.itemType === 'panels')
+        .reduce((sum, item) => sum + item.price * item.quantity, 0)
+    : 0;
+  const productsShown = serverQuote
+    ? serverQuote.products_ht - serverQuote.discount + serverQuote.palettes_ht + panelExtra
+    : productsHT;
+  const shippingShown = serverQuote ? serverQuote.shipping : shippingCost;
+  const dechargementShown = serverQuote ? serverQuote.dechargement : massifDechargementFee;
+  const massifInstallShown = serverQuote ? serverQuote.installation : massifInstallFee;
+  const totemInstallShown = serverQuote ? serverQuote.totem_installation : totemInstallFee;
+  const totalHT = serverQuote
+    ? serverQuote.total + panelExtra
+    : productsHT + shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee;
   const tva      = totalHT * 0.2;
   const totalTTC = totalHT * 1.2;
 
@@ -389,6 +453,11 @@ export function CartPage() {
                                 </div>
                               )}
                             </div>
+                            {item.details?.supplierName || item.details?.companyName ? (
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {item.details.supplierName || item.details.companyName}
+                              </p>
+                            ) : null}
                             {item.details?.format && (
                               <p className="text-xs text-gray-500 mt-0.5">Format : {item.details.format} cm</p>
                             )}
@@ -590,6 +659,11 @@ export function CartPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-black text-sm">{item.name}</h3>
+                          {item.details?.supplierName || item.details?.companyName ? (
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {item.details.supplierName || item.details.companyName}
+                            </p>
+                          ) : null}
                           {item.details?.weight && (
                             <p className="text-xs text-gray-500 mt-0.5">
                               {item.details.weight.toLocaleString('fr-FR')} kg/u
@@ -838,7 +912,7 @@ export function CartPage() {
                 )}
                 <div className="flex justify-between text-gray-600">
                   <span>Sous-total produits HT</span>
-                  <span>{productsHT.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
+                  <span>{productsShown.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€</span>
                 </div>
                 {(shippingCost > 0 || massifItems.length > 0 || totemItems.length > 0) && (
                   <div className="space-y-1.5">
@@ -847,8 +921,8 @@ export function CartPage() {
                         <Truck className="w-3.5 h-3.5" /> Transport
                       </span>
                       <span>
-                        {shippingCost > 0
-                          ? `${shippingCost.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€`
+                        {shippingShown > 0
+                          ? `${shippingShown.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€`
                           : savedDeliveryAddress?.postalCode
                             ? '0,00€'
                             : 'CP requis'}
@@ -880,11 +954,17 @@ export function CartPage() {
                     )}
                   </div>
                 )}
-                {totemInstallFee > 0 && (
+                {serverQuote && serverQuote.delay_days > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Délai</span>
+                    <span>{serverQuote.delay_days} j</span>
+                  </div>
+                )}
+                {totemInstallShown > 0 && (
                   <div className="flex justify-between text-gray-600">
                     <span>Installation totems</span>
                     <span>
-                      {totemInstallFee.toLocaleString('fr-FR', {
+                      {totemInstallShown.toLocaleString('fr-FR', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
@@ -892,11 +972,23 @@ export function CartPage() {
                     </span>
                   </div>
                 )}
-                {massifInstallFee > 0 && (
+                {dechargementShown > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Déchargement massifs</span>
+                    <span>
+                      {dechargementShown.toLocaleString('fr-FR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      €
+                    </span>
+                  </div>
+                )}
+                {massifInstallShown > 0 && (
                   <div className="flex justify-between text-gray-600">
                     <span>Installation massifs</span>
                     <span>
-                      {massifInstallFee.toLocaleString('fr-FR', {
+                      {massifInstallShown.toLocaleString('fr-FR', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}

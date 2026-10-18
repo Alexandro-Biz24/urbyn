@@ -62,10 +62,18 @@ export function CartSidebar({ isOpen, onClose }: CartSidebarProps) {
                         {item.details?.itemType === 'panels' && ' × 150 cm'}
                       </p>
                     )}
+                    {item.details?.supplierName ? (
+                      <p className="text-xs text-gray-600 mt-0.5">{item.details.supplierName}</p>
+                    ) : null}
                     <p className="text-xs text-gray-600 mt-0.5">Quantité : {item.quantity}</p>
                     <p className="text-sm font-bold text-black mt-2">
-                      {(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT
+                      {typeof item.details?.addedTotal === 'number'
+                        ? `${item.details.addedTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                        : `${(item.price * item.quantity).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ HT`}
                     </p>
+                    {typeof item.details?.addedTotal === 'number' ? (
+                      <p className="text-[11px] text-gray-500">ajouté au panier</p>
+                    ) : null}
                   </div>
 
                   {/* Bouton conformité après le dernier totem */}

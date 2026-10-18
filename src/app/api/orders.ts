@@ -90,6 +90,8 @@ export type SupplierLeadDetail = {
   delivery_address: Record<string, unknown> | null
   currency: string
   supplier_subtotal_ht: number
+  supplier_shipping_ht: number
+  supplier_services_ht: number
   supplier_total_ht: number
   supplier_total_ttc: number
   items: ClientOrderItem[]
@@ -101,7 +103,13 @@ export function createClientOrder(payload: {
   items: unknown[]
   shippingCost: number
   massifInstallFee?: number
+  massifDechargementFee?: number
   totemInstallFee?: number
+  massifTransport?: boolean
+  massifDechargement?: boolean
+  massifInstallation?: boolean
+  totemTransport?: boolean
+  totemInstallation?: boolean
   massifShipping?: unknown
   totalHT?: number
 }): Promise<ClientOrderDetail> {

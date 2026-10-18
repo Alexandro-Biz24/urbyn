@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { ProgressSteps } from '../components/ProgressSteps';
-import { HardHat, Calculator, Palette, Image, Camera, MapPin, Truck, PackageOpen, ShoppingCart, CalendarClock, Check, ChevronDown, ChevronUp, Wrench, Users, Lightbulb, ClipboardList, Shield, Scale, FileCheck, FileText, AlertTriangle } from 'lucide-react';
+import { HardHat, Calculator, Palette, Image, Camera, MapPin, Truck, Forklift, PackageOpen, ShoppingCart, CalendarClock, Check, ChevronDown, ChevronUp, Wrench, Users, Lightbulb, ClipboardList, Shield, Scale, FileCheck, FileText, AlertTriangle } from 'lucide-react';
 
 const productTitles: Record<string, string> = {
   'totem': 'Totem',
@@ -167,6 +167,12 @@ const servicesParProduit: Record<string, Service[]> = {
       description: 'Livraison des massifs sur site'
     },
     {
+      id: 'dechargement',
+      name: 'Déchargement',
+      icon: Forklift,
+      description: 'Déchargement des massifs à la livraison'
+    },
+    {
       id: 'installation',
       name: 'Installation',
       icon: HardHat,
@@ -234,12 +240,27 @@ export function ServicesSpecifiquesPage() {
   const productTitle = product ? productTitles[product] : 'Solution';
   const services = product ? servicesParProduit[product] || [] : [];
 
+  // Chaîne de dépendances entre services. Pour les massifs béton :
+  // Transport → Déchargement → Installation. Ailleurs : Transport → Installation.
+  const servicePrerequisite: Record<string, string> =
+    product === 'massif-beton'
+      ? { dechargement: 'transport', installation: 'dechargement' }
+      : { installation: 'transport' };
+
+  /** Services qui dépendent de `serviceId`, directement ou en cascade. */
+  const dependentsOf = (serviceId: string): string[] =>
+    Object.keys(servicePrerequisite)
+      .filter(id => servicePrerequisite[id] === serviceId)
+      .flatMap(id => [id, ...dependentsOf(id)]);
+
   const toggleService = (serviceId: string) => {
     // Empêcher la désélection du transport pour Totem
     if (product === 'totem' && serviceId === 'transport') return;
 
-    // Installation bloquée si Transport non sélectionné ou si Enlèvement actif
-    if (serviceId === 'installation' && (!selectedServices.includes('transport') || selectedServices.includes('enlevement'))) return;
+    // Un service dépendant est bloqué tant que son prérequis n'est pas coché,
+    // et reste incompatible avec l'Enlèvement.
+    const prerequisite = servicePrerequisite[serviceId];
+    if (prerequisite && (!selectedServices.includes(prerequisite) || selectedServices.includes('enlevement'))) return;
 
     // Transport bloqué si Enlèvement actif
     if (serviceId === 'transport' && selectedServices.includes('enlevement')) return;
@@ -262,7 +283,10 @@ export function ServicesSpecifiquesPage() {
 
     setSelectedServices(prev => {
       const isSelected = prev.includes(serviceId);
-      const next = isSelected ? prev.filter(id => id !== serviceId) : [...prev, serviceId];
+      // Décocher un service retire aussi ceux qui en dépendent, sinon ils
+      // resteraient sélectionnés tout en étant grisés.
+      const toRemove = new Set([serviceId, ...dependentsOf(serviceId)]);
+      const next = isSelected ? prev.filter(id => !toRemove.has(id)) : [...prev, serviceId];
       saveServices(next);
       return next;
     });
@@ -618,20 +642,22 @@ export function ServicesSpecifiquesPage() {
                 {/* Séparateur */}
                 <hr className="border-slate-200 my-8" />
 
-                {/* Groupe 2 : Transport / Enlèvement / Installation */}
+                {/* Groupe 2 : Transport / Déchargement / Installation / Enlèvement */}
                 <div className="grid md:grid-cols-2 gap-6">
-                  {services.filter(s => ['transport', 'enlevement', 'installation'].includes(s.id)).map((service) => {
+                  {services.filter(s => ['transport', 'dechargement', 'enlevement', 'installation'].includes(s.id)).map((service) => {
                     const Icon = service.icon;
                     const isSelected = selectedServices.includes(service.id);
+                    const prerequisite = servicePrerequisite[service.id];
+                    const prerequisiteName = services.find(s => s.id === prerequisite)?.name ?? prerequisite;
                     const isDisabled =
-                      (service.id === 'installation' && (
-                        !selectedServices.includes('transport') || selectedServices.includes('enlevement')
+                      (!!prerequisite && (
+                        !selectedServices.includes(prerequisite) || selectedServices.includes('enlevement')
                       )) ||
                       (service.id === 'transport' && selectedServices.includes('enlevement')) ||
                       (service.id === 'enlevement' && selectedServices.includes('transport'));
                     const disabledLabel =
-                      service.id === 'installation'
-                        ? (selectedServices.includes('enlevement') ? 'Non disponible avec Enlèvement' : 'Nécessite Transport')
+                      prerequisite
+                        ? (selectedServices.includes('enlevement') ? 'Non disponible avec Enlèvement' : `Nécessite ${prerequisiteName}`)
                         : service.id === 'transport'
                         ? 'Non disponible avec Enlèvement'
                         : 'Non disponible avec Transport';
