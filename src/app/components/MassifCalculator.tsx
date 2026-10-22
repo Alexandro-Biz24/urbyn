@@ -10,7 +10,9 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { cn } from './ui/utils';
 import { useCart } from '../context/CartContext';
 import {
-  MASSIF_TRUCK_BASE_EUR,
+  MASSIF_PER_KM_EUR,
+  MASSIF_PER_TON_EXTRA_EUR,
+  MASSIF_SHIPPING_MIN_EUR,
   computeMassifShippingBySupplier,
   estimateDistanceKm,
   mergeMassifCartAndDraft,
@@ -213,8 +215,7 @@ export function familyImage(type: MassifType): any {
   return type === 'lego' ? massifLegoImg : massifImg;
 }
 
-/** Estimation livraison massif (legacy) : 200 €/camion + 1 €/km × camions.
- *  Préférer `computeMassifShippingBySupplier` (mutualisé + 3,4 €/t). */
+/** Estimation livraison massif : camions × (2/0,75) €/km + 3,4 €/t, plancher 400 €. */
 export function estimateMassifDelivery(opts: {
   totalWeightKg: number;
   trucksCount: number;
@@ -224,9 +225,8 @@ export function estimateMassifDelivery(opts: {
 }): number {
   const distanceKm = estimateDistanceKm(opts.supplierZip, opts.postalCode, opts.country);
   const trucks = Math.max(1, opts.trucksCount);
-  const truckFee = trucks * MASSIF_TRUCK_BASE_EUR;
-  const distanceFee = trucks * distanceKm;
-  return Math.round((truckFee + distanceFee) * 100) / 100;
+  const raw = trucks * distanceKm * MASSIF_PER_KM_EUR + (opts.totalWeightKg / 1000) * MASSIF_PER_TON_EXTRA_EUR;
+  return Math.round(Math.max(MASSIF_SHIPPING_MIN_EUR, raw) * 100) / 100;
 }
 
 function formatEuro(value: number, currency = 'EUR') {
@@ -1031,7 +1031,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                   <p className="text-sm text-gray-700 leading-relaxed mb-6">
                     Lestage béton permettant de stabiliser des dispositifs extérieurs. Disponible en 5
                     familles — Cubique, Lego, Cylindrique, Stabilize et Candélabre — pour répondre à
-                    toutes les configurations de chantier. Livraison par camion de 24 tonnes,
+                    toutes les configurations de chantier. Livraison par camion de 26 tonnes,
                     installation possible sur devis.
                   </p>
 
@@ -1047,7 +1047,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                     </div>
                     <div className="flex justify-between border-b border-gray-100 pb-2">
                       <span className="text-gray-600 font-medium">Transport</span>
-                      <span className="text-black font-semibold">Camion 24 T</span>
+                      <span className="text-black font-semibold">Camion 26 T</span>
                     </div>
                     <div className="flex justify-between border-b border-gray-100 pb-2">
                       <span className="text-gray-600 font-medium">Options cubique</span>
@@ -1570,7 +1570,7 @@ export function MassifCalculator({ initialConfig, onCalculate }: MassifCalculato
                     <h4 className="font-bold text-black text-sm mb-3 flex items-center gap-2">
                       <Truck className="w-4 h-4" /> Remplissage camion (
                       {Math.max(1, shippingBySupplier.trucksTotal)} camion
-                      {shippingBySupplier.trucksTotal > 1 ? 's' : ''} · 24 T)
+                      {shippingBySupplier.trucksTotal > 1 ? 's' : ''} · 26 T)
                     </h4>
                     {cartMassifWeight > 0 && (
                       <p className="text-[11px] text-gray-600 mb-3">

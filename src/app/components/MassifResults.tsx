@@ -75,7 +75,7 @@ const MASSIF_DATA_LEGO: Record<string, { label: string; weight: number; prices: 
   '400x800x1600': { label: '40 x 80 x 160 cm', weight: 1200, prices: { aucun: 255.00 } }
 };
 
-const TRUCK_CAPACITY = 24000;
+const TRUCK_CAPACITY = 26000;
 
 export function MassifResults({ config, onReset }: MassifResultsProps) {
   const [currentStep, setCurrentStep] = useState<'delivery' | 'summary' | 'payment' | 'email'>('delivery');
@@ -160,7 +160,7 @@ export function MassifResults({ config, onReset }: MassifResultsProps) {
   const { totalPrice, totalWeight, totalItems, liftingEyesCost, liftingEyesDelivery } = calculateTotals;
 
   const trucksCount = useMemo(() => {
-    if (totalWeight <= TRUCK_CAPACITY * 1.02) return 1;
+    if (totalWeight <= TRUCK_CAPACITY * 1.05) return 1;
     return Math.ceil(totalWeight / TRUCK_CAPACITY);
   }, [totalWeight]);
 
@@ -271,7 +271,7 @@ export function MassifResults({ config, onReset }: MassifResultsProps) {
                   <ul className="text-xs text-blue-800 space-y-2">
                     <li>• Facture envoyée à {contactInfo.email}</li>
                     <li>• Notre logistique vous contactera sous 48h</li>
-                    <li>• Vérifiez les accès pour un camion de 24t</li>
+                    <li>• Vérifiez les accès pour un camion de 26t</li>
                   </ul>
                 </div>
               </div>
@@ -515,7 +515,7 @@ export function MassifResults({ config, onReset }: MassifResultsProps) {
                 Payer maintenant
               </Button>
               <p className="text-[10px] text-black text-center font-medium px-4 leading-tight">
-                En payant, vous acceptez les CGV de Urbyn et confirmez la validité des accès pour un véhicule de 24t.
+                En payant, vous acceptez les CGV de Urbyn et confirmez la validité des accès pour un véhicule de 26t.
               </p>
             </CardContent>
           </Card>
@@ -526,7 +526,7 @@ export function MassifResults({ config, onReset }: MassifResultsProps) {
              </div>
              <div>
                <p className="text-[10px] font-black text-emerald-800 uppercase tracking-wider">Transport</p>
-               <p className="text-xs font-bold text-emerald-700 leading-tight">Livraison optimisée sur {trucksCount} camion(s) de 24t.</p>
+               <p className="text-xs font-bold text-emerald-700 leading-tight">Livraison optimisée sur {trucksCount} camion(s) de 26t.</p>
              </div>
           </div>
         </div>
