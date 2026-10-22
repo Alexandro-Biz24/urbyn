@@ -1,10 +1,10 @@
 /**
  * Livraison massifs béton — mutualisée par fournisseur + adresse d'origine.
  *
- * - Capacité camion : 24 T
- * - 200 € / camion entamé
- * - 1 € / km (distance fournisseur → livraison)
- * - 3,4 € / tonne transportée (coût exceptionnel)
+ * - Capacité camion : 26 T, un seul camion jusqu'à 26 T + 5 %
+ * - (2/0,75) € / km par camion
+ * - 3,4 € / tonne transportée
+ * - plancher : max(300/0,75 €, ce prix) par groupe
  * - Déchargement massif : 490 € forfaitaires
  * - Installation massif : 65 € par unité manipulée (palette ou massif seul)
  *
@@ -13,9 +13,10 @@
 
 import { totalHandlingUnitsForMassifs } from './massifPalette'
 
-export const MASSIF_TRUCK_CAPACITY_KG = 24_000
-export const MASSIF_TRUCK_BASE_EUR = 200
-export const MASSIF_PER_KM_EUR = 1
+export const MASSIF_TRUCK_CAPACITY_KG = 26_000
+export const MASSIF_TRUCK_TOLERANCE = 1.05
+export const MASSIF_PER_KM_EUR = 2 / 0.75
+export const MASSIF_SHIPPING_MIN_EUR = 300 / 0.75
 export const MASSIF_PER_TON_EXTRA_EUR = 3.4
 /** Déchargement : forfait, quel que soit le nombre de massifs. */
 export const MASSIF_DECHARGEMENT_EUR = 490
@@ -199,7 +200,7 @@ export function trucksForWeight(totalWeightKg: number): {
   truckFills: number[]
 } {
   if (totalWeightKg <= 0) return { trucksCount: 0, truckFills: [] }
-  if (totalWeightKg <= MASSIF_TRUCK_CAPACITY_KG * 1.02) {
+  if (totalWeightKg <= MASSIF_TRUCK_CAPACITY_KG * MASSIF_TRUCK_TOLERANCE) {
     return {
       trucksCount: 1,
       truckFills: [Math.min(100, (totalWeightKg / MASSIF_TRUCK_CAPACITY_KG) * 100)],
@@ -281,12 +282,13 @@ export function computeMassifShippingBySupplier(
     const { trucksCount, truckFills } = trucksForWeight(totalWeightKg)
     const zip = originZipOf(list[0])
     const distanceKm = estimateDistanceKm(zip, deliveryPostalCode, deliveryCountry)
-    const truckFee = trucksCount * MASSIF_TRUCK_BASE_EUR
+    const truckFee = 0
     const distanceFee = trucksCount * distanceKm * MASSIF_PER_KM_EUR
     const tonnageFee = includeTonnageFee
       ? Math.round((totalWeightKg / 1000) * MASSIF_PER_TON_EXTRA_EUR * 100) / 100
       : 0
-    const shippingTotal = Math.round((truckFee + distanceFee + tonnageFee) * 100) / 100
+    const shippingTotal =
+      Math.round(Math.max(MASSIF_SHIPPING_MIN_EUR, distanceFee + tonnageFee) * 100) / 100
     groups.push({
       supplierKey: key,
       supplierName: supplierNameOf(list[0]),

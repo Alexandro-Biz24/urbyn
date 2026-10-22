@@ -758,7 +758,7 @@ export function CartPage() {
                       </h3>
                       <span className="text-xs text-amber-700">
                         {massifShipping.trucksTotal} camion
-                        {massifShipping.trucksTotal > 1 ? 's' : ''} · 24 T
+                        {massifShipping.trucksTotal > 1 ? 's' : ''} · 26 T
                       </span>
                     </div>
                     <div className="space-y-4">
