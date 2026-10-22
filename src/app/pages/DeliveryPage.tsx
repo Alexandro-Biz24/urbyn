@@ -282,63 +282,64 @@ export function DeliveryPage() {
                     </span>
                   </div>
 
-                  {(hasMassif || hasTotem || hasPanelsOnly) && (
-                    <div className="mb-3 space-y-1.5 text-xs text-gray-600">
-                      {hasTotem && totemShipAmount > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span>Totems</span>
-                          <span className="font-semibold text-black shrink-0">
-                            {totemShipAmount.toLocaleString('fr-FR', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                            €
-                          </span>
-                        </div>
-                      )}
-                      {hasMassif && massifShipAmount > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span>Massifs</span>
-                          <span className="font-semibold text-black shrink-0">
-                            {massifShipAmount.toLocaleString('fr-FR', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                            €
-                          </span>
-                        </div>
-                      )}
-                      {hasPanelsOnly && panelShipAmount > 0 && (
-                        <div className="flex justify-between gap-2">
-                          <span>Panneaux</span>
-                          <span className="font-semibold text-black shrink-0">
-                            {panelShipAmount.toLocaleString('fr-FR', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                            €
-                          </span>
-                        </div>
+                  <div className="pb-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-black">Frais de livraison</span>
+                      {shippingLoading ? (
+                        <span className="flex items-center gap-1 text-gray-400 text-xs">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Calcul…
+                        </span>
+                      ) : shippingReady || hasMassif || (hasTotem && deliveryAddress.postalCode) ? (
+                        <span className="font-bold text-black">
+                          {shipping.toLocaleString('fr-FR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                          €
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs italic">Sélectionnez une ville</span>
                       )}
                     </div>
-                  )}
-
-                  <div className="flex justify-between text-sm pb-2">
-                    <span className="text-black">Frais de livraison</span>
-                    {shippingLoading ? (
-                      <span className="flex items-center gap-1 text-gray-400 text-xs">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Calcul…
-                      </span>
-                    ) : shippingReady || hasMassif || (hasTotem && deliveryAddress.postalCode) ? (
-                      <span className="font-bold text-black">
-                        {shipping.toLocaleString('fr-FR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                        €
-                      </span>
-                    ) : (
-                      <span className="text-gray-400 text-xs italic">Sélectionnez une ville</span>
+                    {(hasMassif || hasTotem || hasPanelsOnly) && (
+                      <div className="mt-1.5 space-y-1 text-xs text-gray-500 pl-3">
+                        {hasTotem && totemShipAmount > 0 && (
+                          <div className="flex justify-between gap-2">
+                            <span>Totems</span>
+                            <span className="shrink-0">
+                              {totemShipAmount.toLocaleString('fr-FR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                              €
+                            </span>
+                          </div>
+                        )}
+                        {hasMassif && massifShipAmount > 0 && (
+                          <div className="flex justify-between gap-2">
+                            <span>Massifs</span>
+                            <span className="shrink-0">
+                              {massifShipAmount.toLocaleString('fr-FR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                              €
+                            </span>
+                          </div>
+                        )}
+                        {hasPanelsOnly && panelShipAmount > 0 && (
+                          <div className="flex justify-between gap-2">
+                            <span>Panneaux</span>
+                            <span className="shrink-0">
+                              {panelShipAmount.toLocaleString('fr-FR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                              €
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
