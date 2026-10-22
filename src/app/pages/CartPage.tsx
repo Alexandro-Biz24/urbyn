@@ -309,22 +309,6 @@ export function CartPage() {
   const shippingCost = massifShipAmount + totemShipAmount + panelShipAmount;
 
   useEffect(() => {
-    if (serverQuote) {
-      localStorage.setItem('shippingCostMassif', String(serverQuote.shipping));
-      localStorage.setItem('massifInstallFee', String(serverQuote.installation));
-      localStorage.setItem('massifDechargementFee', String(serverQuote.dechargement));
-      localStorage.setItem('totemInstallFee', String(serverQuote.totem_installation));
-      localStorage.setItem(
-        'shippingCost',
-        String(
-          serverQuote.shipping +
-            serverQuote.dechargement +
-            serverQuote.installation +
-            serverQuote.totem_installation,
-        ),
-      );
-      return;
-    }
     if (items.length === 0) return;
     if (!hasPanelsOnlyShip) {
       localStorage.setItem('shippingCostOther', '0');
@@ -349,24 +333,14 @@ export function CartPage() {
     shippingCost,
     hasPanelsOnlyShip,
     totemShipping,
-    serverQuote,
   ]);
 
-  const panelExtra = serverQuote
-    ? items
-        .filter((item) => item.details?.itemType === 'panels')
-        .reduce((sum, item) => sum + item.price * item.quantity, 0)
-    : 0;
-  const productsShown = serverQuote
-    ? serverQuote.products_ht - serverQuote.discount + serverQuote.palettes_ht + panelExtra
-    : productsHT;
-  const shippingShown = serverQuote ? serverQuote.shipping : shippingCost;
-  const dechargementShown = serverQuote ? serverQuote.dechargement : massifDechargementFee;
-  const massifInstallShown = serverQuote ? serverQuote.installation : massifInstallFee;
-  const totemInstallShown = serverQuote ? serverQuote.totem_installation : totemInstallFee;
-  const totalHT = serverQuote
-    ? serverQuote.total + panelExtra
-    : productsHT + shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee;
+  const productsShown = productsHT;
+  const shippingShown = shippingCost;
+  const dechargementShown = massifDechargementFee;
+  const massifInstallShown = massifInstallFee;
+  const totemInstallShown = totemInstallFee;
+  const totalHT = productsHT + shippingCost + massifDechargementFee + massifInstallFee + totemInstallFee;
   const tva      = totalHT * 0.2;
   const totalTTC = totalHT * 1.2;
 
